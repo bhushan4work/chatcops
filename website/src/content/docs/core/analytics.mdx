@@ -15,6 +15,42 @@ chatcopsMiddleware({
 });
 ```
 
+## Reading Stats with Express
+
+`chatcopsAnalyticsHandler` returns the stats for the traffic handled by `chatcopsMiddleware`. Pass the **same config object** to both so they share one handler and one `AnalyticsCollector`:
+
+```typescript
+import express from 'express';
+import { chatcopsMiddleware, chatcopsAnalyticsHandler } from '@chatcops/server';
+
+const config = {
+  provider: { type: 'claude', apiKey: process.env.ANTHROPIC_API_KEY! },
+  systemPrompt: 'You are a helpful assistant.',
+  cors: '*',
+  analytics: true,
+};
+
+const app = express();
+app.use(express.json());
+
+app.post('/chat', chatcopsMiddleware(config));
+app.get('/analytics', chatcopsAnalyticsHandler(config));
+
+app.listen(3001);
+```
+
+`GET /analytics` responds with the aggregated stats (or `null` if `analytics` is not enabled):
+
+```json
+{
+  "totalConversations": 2,
+  "totalMessages": 4,
+  "leadsCapture": 0,
+  "averageMessagesPerConversation": 2,
+  "eventCounts": { "conversation:started": 2, "message:sent": 2, "message:received": 2 }
+}
+```
+
 ## Tracked Events
 
 When `analytics: true`, the server automatically tracks:

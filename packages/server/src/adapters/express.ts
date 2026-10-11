@@ -2,8 +2,21 @@ import type { Request, Response, NextFunction } from 'express';
 import { createChatHandler } from '../handler.js';
 import type { ChatCopsServerConfig } from '../config.js';
 
+type ChatHandler = ReturnType<typeof createChatHandler>;
+
+const chatHandlers = new WeakMap<ChatCopsServerConfig, ChatHandler>();
+
+function getOrCreateChatHandler(config: ChatCopsServerConfig): ChatHandler {
+  let handler = chatHandlers.get(config);
+  if (!handler) {
+    handler = createChatHandler(config);
+    chatHandlers.set(config, handler);
+  }
+  return handler;
+}
+
 export function chatcopsMiddleware(config: ChatCopsServerConfig) {
-  const { handleChat, getAnalytics } = createChatHandler(config);
+  const { handleChat } = getOrCreateChatHandler(config);
 
   return async function chatcopsHandler(req: Request, res: Response, next: NextFunction) {
     // Handle CORS preflight
@@ -42,7 +55,7 @@ export function chatcopsMiddleware(config: ChatCopsServerConfig) {
 }
 
 export function chatcopsAnalyticsHandler(config: ChatCopsServerConfig) {
-  const { getAnalytics } = createChatHandler(config);
+  const { getAnalytics } = getOrCreateChatHandler(config);
   return (_req: Request, res: Response) => {
     res.json(getAnalytics());
   };
