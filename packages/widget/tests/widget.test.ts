@@ -206,4 +206,79 @@ describe('Widget', () => {
     expect(sendMessage).not.toHaveBeenCalled();
     expect(getInternals(widget).messages).toHaveLength(4);
   });
+
+  it('keeps saved history and skips late callbacks when destroyed mid-stream', async () => {
+    const onMessage = vi.fn();
+    const onError = vi.fn();
+    const widget = new Widget({
+      apiUrl: 'https://api.test/chat',
+      onMessage,
+      onError,
+    });
+    widget.init();
+
+    let releaseStream!: () => void;
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+
+    const sendMessage = vi.fn()
+      .mockImplementationOnce(async function* () {
+        yield { content: 'First reply' };
+        yield { done: true };
+      })
+      .mockImplementationOnce(async function* () {
+        yield { content: 'Partial reply' };
+        await streamGate;
+        yield { content: ' and a late tail' };
+        yield { done: true };
+      });
+
+    getInternals(widget).client.sendMessage = sendMessage;
+
+    await getInternals(widget).handleSend('First question');
+    expect(onMessage).toHaveBeenCalledTimes(2);
+
+    const secondReply = getInternals(widget).handleSend('Second question');
+
+    const messageEvent = vi.fn();
+    const errorEvent = vi.fn();
+    widget.on('message', messageEvent);
+    widget.on('error', errorEvent);
+
+    await vi.waitFor(() => {
+      expect(getInternals(widget).shadow.textContent).toContain('Partial reply');
+    });
+
+    const secondCallOptions = sendMessage.mock.calls[1]?.[1] as { signal?: AbortSignal };
+    const secondSignal = secondCallOptions?.signal;
+    const signalAbortedBeforeDestroy = secondSignal?.aborted;
+    const callsAtDestroy = onMessage.mock.calls.length;
+
+    widget.destroy();
+
+    releaseStream();
+    await secondReply;
+
+    expect(onMessage).toHaveBeenCalledTimes(callsAtDestroy);
+    expect(onMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('late tail') })
+    );
+    expect(messageEvent).not.toHaveBeenCalled();
+    expect(errorEvent).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+
+    const raw = localStorage.getItem('chatcops_conversation');
+    expect(raw).toBeTruthy();
+    const stored = JSON.parse(raw!);
+    expect(stored.messages).toHaveLength(2);
+    expect(stored.messages[0]).toMatchObject({ role: 'user', content: 'First question' });
+    expect(stored.messages[1]).toMatchObject({ role: 'assistant', content: 'First reply' });
+    expect(raw).not.toContain('Second question');
+    expect(raw).not.toContain('late tail');
+
+    expect(secondSignal).toBeInstanceOf(AbortSignal);
+    expect(signalAbortedBeforeDestroy).toBe(false);
+    expect(secondSignal?.aborted).toBe(true);
+  });
 });

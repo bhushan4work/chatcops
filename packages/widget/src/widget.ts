@@ -94,6 +94,8 @@ export class Widget {
   private userData?: Record<string, string>;
   private userDataSent = false;
   private isStreaming = false;
+  private destroyed = false;
+  private abortController?: AbortController;
   private retryRequests = new Map<string, SendRequestOptions>();
   private eventHandlers = new Map<WidgetEventType, Set<WidgetEventHandler>>();
   private containerEl?: HTMLElement;
@@ -248,6 +250,9 @@ export class Widget {
   }
 
   destroy(): void {
+    this.destroyed = true;
+    this.abortController?.abort();
+    this.abortController = undefined;
     this.preChatFormEl?.destroy();
     this.bubble?.destroy();
     this.panel.destroy();
@@ -269,6 +274,7 @@ export class Widget {
   }
 
   private emit(event: WidgetEventType, ...args: unknown[]): void {
+    if (this.destroyed) return;
     this.eventHandlers.get(event)?.forEach((h) => h(...args));
   }
 
@@ -422,8 +428,15 @@ export class Widget {
     let requestCompleted = false;
     let hasError = false;
 
+    const abortController = new AbortController();
+    this.abortController = abortController;
+
     try {
-      for await (const chunk of this.client.sendMessage(this.createRequest(text, options, includeUserData))) {
+      for await (const chunk of this.client.sendMessage(
+        this.createRequest(text, options, includeUserData),
+        { signal: abortController.signal }
+      )) {
+        if (this.destroyed) break;
         if (chunk.error) {
           const errorType = this.resolveErrorType(chunk.error);
           assistantMsg.content = this.getErrorMessage(errorType);
@@ -473,6 +486,8 @@ export class Widget {
         }
       }
 
+      if (this.destroyed) return;
+
       if (!hasError && !requestCompleted) {
         requestCompleted = true;
       }
@@ -494,6 +509,8 @@ export class Widget {
         }
       }
     } catch (err) {
+      if (this.destroyed) return;
+
       assistantMsg.content = this.locale.errorGeneric;
       assistantMsg.status = 'error';
       assistantMsg.errorType = 'network';
@@ -511,13 +528,19 @@ export class Widget {
       this.config.onError?.(error);
       this.emit('error', error);
     } finally {
-      if (includeUserData && requestCompleted) {
-        this.userDataSent = true;
+      if (this.abortController === abortController) {
+        this.abortController = undefined;
       }
-      this.isStreaming = false;
-      this.panel.input.setDisabled(false);
-      this.panel.input.focus();
-      this.saveHistory();
+
+      if (!this.destroyed) {
+        if (includeUserData && requestCompleted) {
+          this.userDataSent = true;
+        }
+        this.isStreaming = false;
+        this.panel.input.setDisabled(false);
+        this.panel.input.focus();
+        this.saveHistory();
+      }
     }
   }
 
