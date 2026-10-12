@@ -5,6 +5,11 @@ export interface ChatClientOptions {
   timeout?: number;
 }
 
+export interface SendMessageOptions {
+  signal?: AbortSignal;
+  timeout?: number;
+}
+
 export class ChatClient {
   private apiUrl: string;
   private timeout: number;
@@ -14,9 +19,22 @@ export class ChatClient {
     this.timeout = options.timeout ?? 30000;
   }
 
-  async *sendMessage(request: WidgetChatRequest): AsyncGenerator<WidgetChatChunk> {
+  async *sendMessage(
+    request: WidgetChatRequest,
+    options: SendMessageOptions = {}
+  ): AsyncGenerator<WidgetChatChunk> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    const timeoutId = setTimeout(() => controller.abort(), options.timeout ?? this.timeout);
+    const externalSignal = options.signal;
+    const onExternalAbort = () => controller.abort();
+
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        controller.abort();
+      } else {
+        externalSignal.addEventListener('abort', onExternalAbort);
+      }
+    }
 
     try {
       const response = await fetch(this.apiUrl, {
@@ -73,12 +91,13 @@ export class ChatClient {
       yield { done: true };
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
-        yield { error: 'timeout' };
+        yield externalSignal?.aborted ? { error: 'aborted' } : { error: 'timeout' };
       } else {
         yield { error: 'network' };
       }
     } finally {
       clearTimeout(timeoutId);
+      externalSignal?.removeEventListener('abort', onExternalAbort);
     }
   }
 }

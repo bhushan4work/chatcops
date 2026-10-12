@@ -21,16 +21,32 @@ function isSafeHref(href: string): boolean {
   return !scheme || SAFE_SCHEMES.has(scheme[1].toLowerCase());
 }
 
+// Reserve a placeholder token that cannot collide with the input: it grows
+// until the token cannot appear anywhere in the text being rendered.
+function reserveToken(text: string): string {
+  let token = '\u0000';
+  while (text.includes(token)) token += '\u0000';
+  return token;
+}
+
 export function renderMarkdown(input: string): string {
   let html = escapeHtml(input);
+  const token = reserveToken(html);
+  const stash: string[] = [];
 
-  // Code blocks (``` ... ```)
+  const stashHtml = (value: string): string => {
+    const index = stash.push(value) - 1;
+    return `${token}${index}${token}`;
+  };
+
+  // Code blocks (``` ... ```) — stashed before any markdown transformation so
+  // their content stays literal and their newlines survive the <br> step.
   html = html.replace(/```(?:\w*)\n?([\s\S]*?)```/g, (_match, code: string) => {
-    return `<pre><code>${code.trim()}</code></pre>`;
+    return stashHtml(`<pre><code>${code.trim()}</code></pre>`);
   });
 
   // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/`([^`]+)`/g, (_match, code: string) => stashHtml(`<code>${code}</code>`));
 
   // Bold
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -65,6 +81,12 @@ export function renderMarkdown(input: string): string {
   // Line breaks (double newline = paragraph break)
   html = html.replace(/\n\n/g, '<br><br>');
   html = html.replace(/\n/g, '<br>');
+
+  // Restore stashed code so its content stays literal and its newlines are
+  // actual newlines rather than <br> tags.
+  for (let i = 0; i < stash.length; i++) {
+    html = html.replace(`${token}${i}${token}`, () => stash[i]);
+  }
 
   return html;
 }

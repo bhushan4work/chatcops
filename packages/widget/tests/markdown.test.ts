@@ -90,6 +90,62 @@ describe('renderMarkdown', () => {
     expect(result).toContain('<code>code</code>');
   });
 
+  describe('code content is not processed as markdown', () => {
+    it('keeps asterisks literal inside inline code (a*b*c)', () => {
+      const result = renderMarkdown('use `a*b*c` here');
+      expect(result).toContain('<code>a*b*c</code>');
+      expect(result).not.toContain('<em>');
+    });
+
+    it('keeps bold markers literal inside inline code', () => {
+      const result = renderMarkdown('`**not bold**`');
+      expect(result).toContain('<code>**not bold**</code>');
+      expect(result).not.toContain('<strong>');
+    });
+
+    it('keeps link syntax literal inside inline code', () => {
+      const result = renderMarkdown('`[text](https://example.com)`');
+      expect(result).toContain('<code>[text](https://example.com)</code>');
+      expect(result).not.toContain('<a ');
+    });
+
+    it('keeps asterisks literal inside a code block', () => {
+      const result = renderMarkdown('```\n*not italic* and **not bold**\n```');
+      expect(result).toContain('<pre><code>*not italic* and **not bold**</code></pre>');
+      expect(result).not.toContain('<em>');
+      expect(result).not.toContain('<strong>');
+    });
+
+    it('keeps link syntax literal inside a code block', () => {
+      const result = renderMarkdown('```\n[text](https://example.com)\n```');
+      expect(result).toContain('<pre><code>[text](https://example.com)</code></pre>');
+      expect(result).not.toContain('<a ');
+    });
+
+    it('keeps list-like lines literal inside a code block', () => {
+      const result = renderMarkdown('```\n- item one\n1. item two\n```');
+      expect(result).toContain('<pre><code>- item one\n1. item two</code></pre>');
+      expect(result).not.toContain('<li>');
+      expect(result).not.toContain('<ul>');
+      expect(result).not.toContain('<ol>');
+    });
+
+    it('preserves newlines inside <pre><code> instead of converting them to <br>', () => {
+      const result = renderMarkdown('```\nline1\nline2\n```');
+      expect(result).toContain('<pre><code>line1\nline2</code></pre>');
+      const code = /<pre><code>([\s\S]*?)<\/code><\/pre>/.exec(result)?.[1] ?? '';
+      expect(code).toContain('\n');
+      expect(code).not.toContain('<br>');
+    });
+
+    it('still escapes HTML inside code', () => {
+      const inline = renderMarkdown('`<b>hi</b>`');
+      expect(inline).toContain('<code>&lt;b&gt;hi&lt;/b&gt;</code>');
+      const block = renderMarkdown('```\n<b>hi</b>\n```');
+      expect(block).toContain('<pre><code>&lt;b&gt;hi&lt;/b&gt;</code></pre>');
+    });
+  });
+
   describe('link schemes', () => {
     it.each([
       'javascript:alert(1)',
