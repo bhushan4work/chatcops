@@ -1,5 +1,11 @@
 # ChatCops
 
+[![CI](https://github.com/codercops/chatcops/actions/workflows/ci.yml/badge.svg)](https://github.com/codercops/chatcops/actions/workflows/ci.yml)
+[![npm @chatcops/widget](https://img.shields.io/npm/v/@chatcops/widget?label=widget)](https://www.npmjs.com/package/@chatcops/widget)
+[![npm @chatcops/core](https://img.shields.io/npm/v/@chatcops/core?label=core)](https://www.npmjs.com/package/@chatcops/core)
+[![npm @chatcops/server](https://img.shields.io/npm/v/@chatcops/server?label=server)](https://www.npmjs.com/package/@chatcops/server)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 Universal, embeddable AI chatbot widget. Add an AI assistant to any website with a single `<script>` tag.
 
 Multi-provider (Claude, OpenAI, Gemini), lead capture, knowledge base, conversation persistence, analytics, and i18n.
@@ -141,6 +147,19 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
 ## Community
 
 Questions, or want to chat with other contributors? Join the [CODERCOPS Discord](https://discord.gg/mpGdJyjaRQ).
+
+## Links
+
+- [Documentation](https://chat.codercops.com)
+- [Contributing Guide](./CONTRIBUTING.md)
+- [Report a Bug](https://github.com/codercops/chatcops/issues/new)
+- [CoderCops](https://codercops.com)
+
+## Contributors
+
+<a href="https://github.com/codercops/chatcops/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=codercops/chatcops" />
+</a>
 
 ## License
 
