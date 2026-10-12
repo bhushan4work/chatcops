@@ -14,7 +14,7 @@ import { chatcopsMiddleware } from '@chatcops/server';
 const app = express();
 app.use(express.json());
 
-app.post('/chat', chatcopsMiddleware({
+app.all('/chat', chatcopsMiddleware({
   provider: {
     type: 'claude',
     apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -34,12 +34,16 @@ app.listen(PORT, () => {
 });
 ```
 
+:::note
+Cross-origin deployments must let `OPTIONS` preflight requests reach the Express adapter by registering the chat handler with `app.all('/chat', handler)`.
+:::
+
 ## With Lead Capture
 
 ```typescript
 import { LeadCaptureTool } from '@chatcops/core/tools';
 
-app.post('/chat', chatcopsMiddleware({
+app.all('/chat', chatcopsMiddleware({
   provider: {
     type: 'claude',
     apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -62,7 +66,7 @@ app.post('/chat', chatcopsMiddleware({
 ```typescript
 import { FAQKnowledgeSource, TextKnowledgeSource } from '@chatcops/core/knowledge';
 
-app.post('/chat', chatcopsMiddleware({
+app.all('/chat', chatcopsMiddleware({
   provider: { type: 'openai', apiKey: process.env.OPENAI_API_KEY! },
   systemPrompt: 'Answer questions using the provided context.',
   knowledge: [

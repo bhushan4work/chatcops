@@ -33,7 +33,7 @@ const config = {
 const app = express();
 app.use(express.json());
 
-app.post('/chat', chatcopsMiddleware(config));
+app.all('/chat', chatcopsMiddleware(config));
 app.get('/analytics', chatcopsAnalyticsHandler(config));
 
 app.listen(3001);
