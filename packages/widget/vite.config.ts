@@ -15,6 +15,8 @@ export default defineConfig({
       output: {
         inlineDynamicImports: true,
         exports: 'named',
+        footer:
+          'if (typeof window !== "undefined" && window.ChatCops && window.ChatCops.default) { Object.assign(window.ChatCops, window.ChatCops.default); }',
       },
     },
   },

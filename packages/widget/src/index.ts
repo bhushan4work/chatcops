@@ -37,8 +37,7 @@ const ChatCops = {
 };
 
 // Auto-init from script tag data attributes
-function autoInit(): void {
-  const script = document.currentScript as HTMLScriptElement | null;
+function autoInit(script: HTMLScriptElement | null): void {
   if (!script) return;
 
   const apiUrl = script.dataset.apiUrl;
@@ -82,12 +81,12 @@ function autoInit(): void {
 }
 
 // Capture currentScript synchronously, then init on DOMContentLoaded
-const currentScript = document.currentScript;
-if (currentScript && (currentScript as HTMLScriptElement).dataset.apiUrl) {
+const currentScript = typeof document !== 'undefined' ? (document.currentScript as HTMLScriptElement | null) : null;
+if (currentScript && currentScript.dataset.apiUrl) {
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', autoInit);
+    document.addEventListener('DOMContentLoaded', () => autoInit(currentScript));
   } else {
-    autoInit();
+    autoInit(currentScript);
   }
 }
 
