@@ -106,7 +106,7 @@ const handler = createChatHandler({
   // Analytics (optional)
   analytics: true,
 
-  // CORS origin (required)
+  // CORS origin (optional, default: '*')
   cors: '*',
 });
 ```

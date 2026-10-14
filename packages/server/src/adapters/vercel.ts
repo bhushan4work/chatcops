@@ -3,6 +3,7 @@ import type { ChatCopsServerConfig } from '../config.js';
 
 export function chatcopsVercelHandler(config: ChatCopsServerConfig) {
   const { handleChat } = createChatHandler(config);
+  const corsOrigin = config.cors ?? '*';
 
   return async function handler(req: Request): Promise<Response> {
     // Handle CORS preflight
@@ -10,7 +11,7 @@ export function chatcopsVercelHandler(config: ChatCopsServerConfig) {
       return new Response(null, {
         status: 204,
         headers: {
-          'Access-Control-Allow-Origin': config.cors,
+          'Access-Control-Allow-Origin': corsOrigin,
           'Access-Control-Allow-Methods': 'POST, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type',
           'Access-Control-Max-Age': '86400',
@@ -57,7 +58,7 @@ export function chatcopsVercelHandler(config: ChatCopsServerConfig) {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': config.cors,
+        'Access-Control-Allow-Origin': corsOrigin,
       },
     });
   };

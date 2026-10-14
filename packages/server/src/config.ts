@@ -10,7 +10,8 @@ export interface ChatCopsServerConfig {
   rateLimit?: { maxRequests: number; windowMs: number };
   webhooks?: WebhookConfig[];
   analytics?: boolean;
-  cors: string;
+  /** Allowed CORS origin. Defaults to `'*'`. */
+  cors?: string;
   i18n?: { defaultLocale: string; locales: Record<string, LocaleStrings> };
 }
 

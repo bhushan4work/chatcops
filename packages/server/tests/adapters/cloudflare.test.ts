@@ -25,6 +25,17 @@ describe('chatcopsCloudflareHandler', () => {
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
   });
 
+  it('returns Access-Control-Allow-Origin: * for OPTIONS when cors is not configured', async () => {
+    const handlerWithoutCors = chatcopsCloudflareHandler({
+      provider: { type: 'claude' as const, apiKey: 'test-key' },
+      systemPrompt: 'Test',
+    });
+    const req = new Request('http://localhost/api/chat', { method: 'OPTIONS' });
+    const res = await handlerWithoutCors(req);
+    expect(res.status).toBe(204);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
+  });
+
   it('returns 400 for malformed JSON body', async () => {
     const req = new Request('http://localhost/api/chat', {
       method: 'POST',

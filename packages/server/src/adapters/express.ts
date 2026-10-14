@@ -17,11 +17,12 @@ function getOrCreateChatHandler(config: ChatCopsServerConfig): ChatHandler {
 
 export function chatcopsMiddleware(config: ChatCopsServerConfig) {
   const { handleChat } = getOrCreateChatHandler(config);
+  const corsOrigin = config.cors ?? '*';
 
   return async function chatcopsHandler(req: Request, res: Response, next: NextFunction) {
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
-      res.setHeader('Access-Control-Allow-Origin', config.cors);
+      res.setHeader('Access-Control-Allow-Origin', corsOrigin);
       res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
       res.setHeader('Access-Control-Max-Age', '86400');
@@ -39,7 +40,7 @@ export function chatcopsMiddleware(config: ChatCopsServerConfig) {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('Access-Control-Allow-Origin', config.cors);
+    res.setHeader('Access-Control-Allow-Origin', corsOrigin);
 
     try {
       for await (const chunk of handleChat(req.body, clientIp)) {
