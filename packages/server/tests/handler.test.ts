@@ -370,6 +370,89 @@ describe('createChatHandler', () => {
     });
   });
 
+  it('returns success: true from tool executor without waiting for webhook completion', async () => {
+    let resolveWebhookFetch!: (response: Response) => void;
+    const unresolvedFetchPromise = new Promise<Response>((resolve) => {
+      resolveWebhookFetch = resolve;
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => unresolvedFetchPromise);
+
+    let executorResult: unknown = null;
+
+    const leadTool = {
+      name: 'capture_lead',
+      description: 'Capture a lead',
+      parameters: {
+        email: { type: 'string' as const, description: 'Email address' },
+      },
+      required: ['email'],
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        data: { email: 'lead@example.com' },
+        message: 'Lead stored',
+      }),
+    };
+
+    mockedCreateProvider.mockResolvedValue({
+      name: 'test-provider',
+      async *chat(params) {
+        executorResult = await params.toolExecutor?.({
+          id: 'tool-1',
+          name: 'capture_lead',
+          input: { email: 'lead@example.com' },
+        });
+
+        yield 'Lead captured successfully.';
+      },
+      async chatSync() {
+        return '';
+      },
+    });
+
+    const { handleChat } = createChatHandler({
+      provider: { type: 'claude', apiKey: 'test-key' },
+      systemPrompt: 'Test',
+      cors: '*',
+      tools: [leadTool],
+      webhooks: [{ url: 'https://hooks.test/lead', events: ['lead:captured'] }],
+    });
+
+    const generator = handleChat({
+      conversationId: 'conv-unresolved',
+      message: 'My email is lead@example.com',
+    });
+
+    // Advance to first chunk: tool executor returns immediately without waiting for unresolved fetch
+    const firstChunk = await generator.next();
+
+    expect(leadTool.execute).toHaveBeenCalledWith({ email: 'lead@example.com' });
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(executorResult).toEqual({
+      success: true,
+      data: { email: 'lead@example.com' },
+      message: 'Lead stored',
+    });
+    expect(firstChunk.done).toBe(false);
+
+    // Verify stream completion waits for webhook resolution before sending done: true
+    let isStreamFinished = false;
+    const streamCompletionPromise = (async () => {
+      for await (const _chunk of generator) {
+        // draining remainder
+      }
+      isStreamFinished = true;
+    })();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(isStreamFinished).toBe(false);
+
+    // Resolving fetch allows the generator to finish awaiting pending webhooks
+    resolveWebhookFetch(new Response('OK', { status: 200 }));
+    await streamCompletionPromise;
+    expect(isStreamFinished).toBe(true);
+  });
+
   it('removes the previous assistant message before regenerating', async () => {
     const receivedMessages: Array<Array<{ role: string; content: string }>> = [];
 

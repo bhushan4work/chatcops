@@ -7,15 +7,19 @@ interface WebhookPayload {
   signature?: string;
 }
 
+export const DEFAULT_WEBHOOK_TIMEOUT_MS = 5000;
+
 export class WebhookDispatcher {
   private configs: WebhookConfig[];
   private maxRetries = 3;
+  private timeoutMs: number;
 
-  constructor(configs: WebhookConfig[]) {
+  constructor(configs: WebhookConfig[], timeoutMs: number = DEFAULT_WEBHOOK_TIMEOUT_MS) {
     for (const config of configs) {
       new URL(config.url); // throws on invalid URL
     }
     this.configs = configs;
+    this.timeoutMs = timeoutMs;
   }
 
   async dispatch(event: string, data: unknown): Promise<void> {
@@ -46,6 +50,7 @@ export class WebhookDispatcher {
             ...(payload.signature ? { 'X-ChatCops-Signature': payload.signature } : {}),
           },
           body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(this.timeoutMs),
         });
 
         if (response.ok) return;

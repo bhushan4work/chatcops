@@ -89,4 +89,24 @@ describe('WebhookDispatcher', () => {
 
     expect(callCount).toBe(1);
   });
+
+  it('passes an AbortSignal timeout to fetch calls and preserves retry behavior', async () => {
+    let callCount = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, options) => {
+      callCount++;
+      expect(options?.signal).toBeInstanceOf(AbortSignal);
+      if (callCount < 2) {
+        throw new DOMException('The operation timed out.', 'TimeoutError');
+      }
+      return new Response('OK', { status: 200 });
+    });
+
+    const dispatcher = new WebhookDispatcher([
+      { url: 'https://hooks.test/hook', events: ['test'] },
+    ], 1000);
+
+    await dispatcher.dispatch('test', {});
+
+    expect(callCount).toBe(2);
+  });
 });
