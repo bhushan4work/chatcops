@@ -453,6 +453,92 @@ describe('createChatHandler', () => {
     expect(isStreamFinished).toBe(true);
   });
 
+  it('awaits pending webhook delivery before returning provider_error when provider throws', async () => {
+    let resolveWebhookFetch!: (response: Response) => void;
+    const unresolvedFetchPromise = new Promise<Response>((resolve) => {
+      resolveWebhookFetch = resolve;
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => unresolvedFetchPromise);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    let executorResult: unknown = null;
+
+    const leadTool = {
+      name: 'capture_lead',
+      description: 'Capture a lead',
+      parameters: {
+        email: { type: 'string' as const, description: 'Email address' },
+      },
+      required: ['email'],
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        data: { email: 'lead@example.com' },
+        message: 'Lead stored',
+      }),
+    };
+
+    mockedCreateProvider.mockResolvedValue({
+      name: 'test-provider',
+      async *chat(params) {
+        executorResult = await params.toolExecutor?.({
+          id: 'tool-1',
+          name: 'capture_lead',
+          input: { email: 'lead@example.com' },
+        });
+
+        throw new Error('Provider failed after tool execution');
+      },
+      async chatSync() {
+        return '';
+      },
+    });
+
+    const { handleChat } = createChatHandler({
+      provider: { type: 'claude', apiKey: 'test-key' },
+      systemPrompt: 'Test',
+      cors: '*',
+      tools: [leadTool],
+      webhooks: [{ url: 'https://hooks.test/lead', events: ['lead:captured'] }],
+    });
+
+    const generator = handleChat({
+      conversationId: 'conv-provider-error',
+      message: 'My email is lead@example.com',
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    let isStreamFinished = false;
+
+    const streamCompletionPromise = (async () => {
+      for await (const chunk of generator) {
+        events.push(JSON.parse(chunk));
+      }
+      isStreamFinished = true;
+    })();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(leadTool.execute).toHaveBeenCalledWith({ email: 'lead@example.com' });
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(executorResult).toEqual({
+      success: true,
+      data: { email: 'lead@example.com' },
+      message: 'Lead stored',
+    });
+    expect(isStreamFinished).toBe(false);
+    expect(events).toEqual([]);
+
+    resolveWebhookFetch(new Response('OK', { status: 200 }));
+    await streamCompletionPromise;
+
+    expect(isStreamFinished).toBe(true);
+    expect(events).toEqual([{ error: 'provider_error' }]);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '[chatcops] Provider error:',
+      expect.any(Error)
+    );
+  });
+
   it('removes the previous assistant message before regenerating', async () => {
     const receivedMessages: Array<Array<{ role: string; content: string }>> = [];
 
