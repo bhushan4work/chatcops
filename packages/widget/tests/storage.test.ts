@@ -55,4 +55,46 @@ describe('ConversationStorage', () => {
     storage1.save({ id: 'conv-a', messages: [], updatedAt: Date.now() });
     expect(storage2.load()).toBeNull();
   });
+
+  it('persists and restores pre-chat completion and userData', () => {
+    const storage = new ConversationStorage();
+    expect(storage.isPreChatCompleted('session-1')).toBe(false);
+    expect(storage.getPreChatData('session-1')).toBeNull();
+
+    storage.setPreChatCompleted('session-1', { name: 'Alice', email: 'alice@example.com' });
+    expect(storage.isPreChatCompleted('session-1')).toBe(true);
+    expect(storage.getPreChatData('session-1')).toEqual({ name: 'Alice', email: 'alice@example.com' });
+    expect(storage.getPreChatUserData('session-1')).toEqual({ name: 'Alice', email: 'alice@example.com' });
+  });
+
+  it('swallows storage errors on pre-chat operations', () => {
+    const storage = new ConversationStorage();
+
+    const originalSetItem = sessionStorage.setItem;
+    const originalGetItem = sessionStorage.getItem;
+
+    sessionStorage.setItem = () => {
+      throw new Error('QuotaExceeded');
+    };
+    expect(() => storage.setPreChatCompleted('session-2', { name: 'Bob' })).not.toThrow();
+    expect(() => storage.setPreChatData('session-2', { name: 'Bob' })).not.toThrow();
+
+    sessionStorage.getItem = () => {
+      throw new Error('SecurityError');
+    };
+    expect(storage.isPreChatCompleted('session-2')).toBe(false);
+    expect(storage.getPreChatData('session-2')).toBeNull();
+
+    sessionStorage.setItem = originalSetItem;
+    sessionStorage.getItem = originalGetItem;
+  });
+
+  it('returns null when pre-chat data in storage is malformed', () => {
+    const storage = new ConversationStorage();
+    sessionStorage.setItem('chatcops-prechat-data-malformed', 'not-valid-json');
+    expect(storage.getPreChatData('malformed')).toBeNull();
+
+    sessionStorage.setItem('chatcops-prechat-data-array', JSON.stringify(['not', 'an', 'object']));
+    expect(storage.getPreChatData('array')).toBeNull();
+  });
 });
