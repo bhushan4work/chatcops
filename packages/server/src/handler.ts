@@ -52,15 +52,20 @@ export function createChatHandler(config: ChatCopsServerConfig) {
     // Get or create conversation
     await conversations.getOrCreate(req.conversationId);
 
+    const conversationMessages = await conversations.getMessages(req.conversationId);
+
+    let assistantToReplace: ChatMessage | undefined;
     if (req.regenerate) {
-      const existingMessages = await conversations.getMessages(req.conversationId);
-      const lastAssistant = [...existingMessages].reverse().find((message) => message.role === 'assistant');
-      if (lastAssistant) {
-        await conversations.removeMessage(req.conversationId, lastAssistant.id);
+      const userIndex = req.messageId
+        ? conversationMessages.findIndex((message) => message.id === req.messageId)
+        : findLastIndex(conversationMessages, (message) => message.role === 'user');
+
+      if (userIndex !== -1) {
+        assistantToReplace = conversationMessages.slice(userIndex + 1).find((message) => message.role === 'assistant');
+      } else if (!req.messageId) {
+        assistantToReplace = [...conversationMessages].reverse().find((message) => message.role === 'assistant');
       }
     }
-
-    const conversationMessages = await conversations.getMessages(req.conversationId);
 
     // Track analytics
     if (analytics && conversationMessages.length === 0) {
@@ -128,7 +133,10 @@ export function createChatHandler(config: ChatCopsServerConfig) {
     }
 
     // Get conversation messages for context
-    const messages = await conversations.getMessages(req.conversationId);
+    const storedMessages = await conversations.getMessages(req.conversationId);
+    const messages = assistantToReplace
+      ? storedMessages.filter((message) => message.id !== assistantToReplace.id)
+      : storedMessages;
 
     // Stream response
     let fullResponse = '';
@@ -204,6 +212,9 @@ export function createChatHandler(config: ChatCopsServerConfig) {
         timestamp: Date.now(),
       };
       await conversations.addMessage(req.conversationId, assistantMessage);
+      if (assistantToReplace) {
+        await conversations.removeMessage(req.conversationId, assistantToReplace.id);
+      }
       analytics?.track('message:received', { conversationId: req.conversationId });
     }
 
@@ -229,3 +240,11 @@ async function awaitPendingWebhooks(pendingWebhooks: Set<Promise<void>>): Promis
     pendingWebhooks.clear();
   }
 }
+
+function findLastIndex<T>(array: T[], predicate: (item: T) => boolean): number {
+  for (let i = array.length - 1; i >= 0; i--) {
+    if (predicate(array[i])) return i;
+  }
+  return -1;
+}
+

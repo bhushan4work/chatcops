@@ -604,7 +604,7 @@ describe('createChatHandler', () => {
     );
   });
 
-  it('removes the previous assistant message before regenerating', async () => {
+  it('excludes the previous assistant message from provider history when regenerating', async () => {
     const receivedMessages: Array<Array<{ role: string; content: string }>> = [];
 
     mockedCreateProvider.mockResolvedValue({
@@ -649,6 +649,229 @@ describe('createChatHandler', () => {
     expect(receivedMessages).toEqual([
       [{ role: 'user', content: 'Hello there' }],
       [{ role: 'user', content: 'Hello there' }],
+    ]);
+  });
+
+  it('preserves the old assistant message when regenerate fails', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const receivedMessages: Array<Array<{ role: string; content: string }>> = [];
+    let shouldFail = false;
+
+    mockedCreateProvider.mockResolvedValue({
+      name: 'test-provider',
+      async *chat(params) {
+        receivedMessages.push(
+          params.messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+          }))
+        );
+        if (shouldFail) {
+          throw new Error('Provider failed during regenerate');
+        }
+        yield receivedMessages.length === 1 ? 'Initial reply' : 'Follow up reply';
+      },
+      async chatSync() {
+        return '';
+      },
+    });
+
+    const { handleChat } = createChatHandler({
+      provider: { type: 'claude', apiKey: 'test-key' },
+      systemPrompt: 'Test',
+      cors: '*',
+    });
+
+    for await (const _chunk of handleChat({
+      conversationId: 'conv-failed-regen',
+      message: 'Hello there',
+      messageId: 'user-1',
+    })) {
+      // Drain initial response.
+    }
+
+    shouldFail = true;
+    const errorEvents: Array<Record<string, unknown>> = [];
+    for await (const chunk of handleChat({
+      conversationId: 'conv-failed-regen',
+      message: 'Hello there',
+      messageId: 'user-1',
+      regenerate: true,
+    })) {
+      errorEvents.push(JSON.parse(chunk));
+    }
+    expect(errorEvents).toEqual([{ error: 'provider_error' }]);
+
+    shouldFail = false;
+    for await (const _chunk of handleChat({
+      conversationId: 'conv-failed-regen',
+      message: 'Next question',
+      messageId: 'user-2',
+    })) {
+      // Drain response.
+    }
+
+    expect(receivedMessages[2]).toEqual([
+      { role: 'user', content: 'Hello there' },
+      { role: 'assistant', content: 'Initial reply' },
+      { role: 'user', content: 'Next question' },
+    ]);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '[chatcops] Provider error:',
+      expect.any(Error)
+    );
+  });
+
+  it('retrying regenerate after a failure does not delete earlier answers', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const receivedMessages: Array<Array<{ role: string; content: string }>> = [];
+    let shouldFail = false;
+
+    mockedCreateProvider.mockResolvedValue({
+      name: 'test-provider',
+      async *chat(params) {
+        receivedMessages.push(
+          params.messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+          }))
+        );
+        if (shouldFail) {
+          throw new Error('Provider failed during regenerate');
+        }
+        yield `Reply ${receivedMessages.length}`;
+      },
+      async chatSync() {
+        return '';
+      },
+    });
+
+    const { handleChat } = createChatHandler({
+      provider: { type: 'claude', apiKey: 'test-key' },
+      systemPrompt: 'Test',
+      cors: '*',
+    });
+
+    // Turn 1
+    for await (const _chunk of handleChat({
+      conversationId: 'conv-retry-earlier',
+      message: 'First question',
+      messageId: 'user-1',
+    })) {}
+
+    // Turn 2
+    for await (const _chunk of handleChat({
+      conversationId: 'conv-retry-earlier',
+      message: 'Second question',
+      messageId: 'user-2',
+    })) {}
+
+    // Regenerate Turn 2 fails
+    shouldFail = true;
+    for await (const _chunk of handleChat({
+      conversationId: 'conv-retry-earlier',
+      message: 'Second question',
+      messageId: 'user-2',
+      regenerate: true,
+    })) {}
+
+    // Retry regenerate Turn 2 succeeds
+    shouldFail = false;
+    for await (const _chunk of handleChat({
+      conversationId: 'conv-retry-earlier',
+      message: 'Second question',
+      messageId: 'user-2',
+      regenerate: true,
+    })) {}
+
+    expect(receivedMessages[3]).toEqual([
+      { role: 'user', content: 'First question' },
+      { role: 'assistant', content: 'Reply 1' },
+      { role: 'user', content: 'Second question' },
+    ]);
+
+    // Subsequent Turn 3
+    for await (const _chunk of handleChat({
+      conversationId: 'conv-retry-earlier',
+      message: 'Third question',
+      messageId: 'user-3',
+    })) {}
+
+    expect(receivedMessages[4]).toEqual([
+      { role: 'user', content: 'First question' },
+      { role: 'assistant', content: 'Reply 1' },
+      { role: 'user', content: 'Second question' },
+      { role: 'assistant', content: 'Reply 4' },
+      { role: 'user', content: 'Third question' },
+    ]);
+  });
+
+  it('successfully replaces exactly one assistant message upon regenerate', async () => {
+    const receivedMessages: Array<Array<{ role: string; content: string }>> = [];
+
+    mockedCreateProvider.mockResolvedValue({
+      name: 'test-provider',
+      async *chat(params) {
+        receivedMessages.push(
+          params.messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+          }))
+        );
+        yield receivedMessages.length === 3 ? 'Regenerated reply 2' : `Reply ${receivedMessages.length}`;
+      },
+      async chatSync() {
+        return '';
+      },
+    });
+
+    const { handleChat } = createChatHandler({
+      provider: { type: 'claude', apiKey: 'test-key' },
+      systemPrompt: 'Test',
+      cors: '*',
+    });
+
+    // Turn 1
+    for await (const _chunk of handleChat({
+      conversationId: 'conv-replace-one',
+      message: 'First question',
+      messageId: 'user-1',
+    })) {}
+
+    // Turn 2
+    for await (const _chunk of handleChat({
+      conversationId: 'conv-replace-one',
+      message: 'Second question',
+      messageId: 'user-2',
+    })) {}
+
+    // Regenerate Turn 2
+    for await (const _chunk of handleChat({
+      conversationId: 'conv-replace-one',
+      message: 'Second question',
+      messageId: 'user-2',
+      regenerate: true,
+    })) {}
+
+    // Turn 3
+    for await (const _chunk of handleChat({
+      conversationId: 'conv-replace-one',
+      message: 'Third question',
+      messageId: 'user-3',
+    })) {}
+
+    const assistantMessages = receivedMessages[3].filter((m) => m.role === 'assistant');
+    expect(assistantMessages).toEqual([
+      { role: 'assistant', content: 'Reply 1' },
+      { role: 'assistant', content: 'Regenerated reply 2' },
+    ]);
+    expect(assistantMessages).toHaveLength(2);
+    expect(receivedMessages[3]).toEqual([
+      { role: 'user', content: 'First question' },
+      { role: 'assistant', content: 'Reply 1' },
+      { role: 'user', content: 'Second question' },
+      { role: 'assistant', content: 'Regenerated reply 2' },
+      { role: 'user', content: 'Third question' },
     ]);
   });
 
