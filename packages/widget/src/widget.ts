@@ -68,14 +68,14 @@ export interface WidgetConfig {
   onPreChatSubmit?: (data: Record<string, string>) => void;
 }
 
-type WidgetEventType =
+export type WidgetEventType =
   | 'open'
   | 'close'
   | 'message'
   | 'error'
   | 'leadCaptured'
   | 'preChatSubmit';
-type WidgetEventHandler = (...args: unknown[]) => void;
+export type WidgetEventHandler = (...args: unknown[]) => void;
 type SendRequestOptions = {
   regenerate?: boolean;
   userMessageId?: string;
@@ -279,11 +279,12 @@ export class Widget {
     this.userData = undefined;
   }
 
-  on(event: WidgetEventType, handler: WidgetEventHandler): void {
+  on(event: WidgetEventType, handler: WidgetEventHandler): () => void {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, new Set());
     }
     this.eventHandlers.get(event)!.add(handler);
+    return () => this.off(event, handler);
   }
 
   off(event: WidgetEventType, handler: WidgetEventHandler): void {

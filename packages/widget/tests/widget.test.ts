@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Widget } from '../src/widget.js';
+import { Widget, type WidgetEventType } from '../src/widget.js';
 import { mockChatStream } from './helpers/stream.js';
 import { ConversationStorage } from '../src/storage.js';
 
@@ -618,5 +618,18 @@ describe('Widget streaming timeout configuration', () => {
     expect(reply.content).not.toContain('Partial reply');
     expect(getInternals(widget).shadow.textContent).not.toContain('Partial reply');
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('returns an unsubscribe function from on() that removes the handler', () => {
+    widget = new Widget({ apiUrl: '/chat' });
+    const eventType: WidgetEventType = 'open';
+    const onOpen = vi.fn();
+    const unsub = widget.on(eventType, onOpen);
+    widget.init();
+
+    unsub();
+    widget.open();
+
+    expect(onOpen).not.toHaveBeenCalled();
   });
 });

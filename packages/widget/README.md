@@ -116,11 +116,11 @@ ChatCops.init(config)         // Initialize the widget
 ChatCops.open()               // Open the chat panel (popup mode)
 ChatCops.close()              // Close the chat panel
 ChatCops.destroy()            // Remove widget and clean up
-ChatCops.on(event, handler)   // Subscribe to events
+ChatCops.on(event, handler)   // Subscribe to events (returns unsubscribe function)
 ChatCops.off(event, handler)  // Unsubscribe
 ```
 
-Events: `open`, `close`, `message`, `error`.
+Events: `open`, `close`, `message`, `error`, `leadCaptured`, `preChatSubmit`.
 
 ## Script Tag Attributes
 
