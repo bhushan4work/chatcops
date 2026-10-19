@@ -16,7 +16,7 @@ export function createChatHandler(config: ChatCopsServerConfig) {
   }
 
   const providerPromise = createProvider(config.provider);
-  const conversations = new ConversationManager();
+  const conversations = new ConversationManager({ store: config.conversationStore });
   const rateLimiter = config.rateLimit ? new RateLimiter(config.rateLimit) : new RateLimiter();
   const analytics = config.analytics ? new AnalyticsCollector() : null;
   const webhooks = config.webhooks?.length ? new WebhookDispatcher(config.webhooks) : null;

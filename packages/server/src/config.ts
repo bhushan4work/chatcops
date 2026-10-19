@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ChatTool, KnowledgeSource, WebhookConfig, ProviderConfig, LocaleStrings } from '@chatcops/core';
+import type { ChatTool, KnowledgeSource, WebhookConfig, ProviderConfig, LocaleStrings, ConversationStore } from '@chatcops/core';
 
 export interface ChatCopsServerConfig {
   provider: ProviderConfig;
@@ -10,6 +10,8 @@ export interface ChatCopsServerConfig {
   rateLimit?: { maxRequests: number; windowMs: number };
   webhooks?: WebhookConfig[];
   analytics?: boolean;
+  /** Storage backend for conversation history. Defaults to an in-memory store (`MemoryStore`). */
+  conversationStore?: ConversationStore;
   /** Allowed CORS origin. Defaults to `'*'`. */
   cors?: string;
   /** @deprecated The server ignores this. Set the widget's text with its `strings` option. */
