@@ -74,7 +74,13 @@ export type ProviderToolExecutor = (call: ProviderToolCall) => Promise<ToolResul
 export interface WebhookConfig {
   url: string;
   events: string[];
+  /** Signs each delivery; check it with `verifyWebhook` from `@chatcops/server`. */
   secret?: string;
+  /**
+   * Allows http and hosts on loopback, private or link-local networks, which
+   * are refused by default. Use it for a local receiver during development.
+   */
+  allowPrivateNetwork?: boolean;
 }
 
 /** How much effort a model spends on each reply. Lower is faster and cheaper. */
@@ -113,6 +119,11 @@ export interface ProviderChatParams {
   toolTimeoutMs?: number;
   maxTokens?: number;
   temperature?: number;
+  /**
+   * Aborts the reply, for example when the visitor disconnects. The provider
+   * request is cancelled and no further tool rounds start.
+   */
+  signal?: AbortSignal;
 }
 
 export interface AnalyticsEvent {

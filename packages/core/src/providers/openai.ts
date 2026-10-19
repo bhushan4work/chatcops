@@ -86,10 +86,11 @@ export class OpenAIProvider implements AIProvider {
     let toolRounds = 0;
 
     while (true) {
-      const stream = await this.client.chat.completions.create({
-        ...this.request(params, messages),
-        stream: true,
-      });
+      params.signal?.throwIfAborted();
+      const stream = await this.client.chat.completions.create(
+        { ...this.request(params, messages), stream: true },
+        { signal: params.signal }
+      );
 
       let finishReason: OpenAI.Chat.Completions.ChatCompletion.Choice['finish_reason'] | null = null;
       let assistantText = '';
@@ -161,7 +162,8 @@ export class OpenAIProvider implements AIProvider {
     let toolRounds = 0;
 
     while (true) {
-      const response = await this.client.chat.completions.create(this.request(params, messages));
+      params.signal?.throwIfAborted();
+      const response = await this.client.chat.completions.create(this.request(params, messages), { signal: params.signal });
 
       const choice = response.choices[0];
       const assistantMessage = choice?.message;

@@ -210,12 +210,14 @@ describe('createChatHandler', () => {
     ]);
   });
 
-  it('accepts a very long page URL but only puts the start of it in the system prompt', async () => {
+  it('accepts a very long page URL but only sends the start of it, outside the system prompt', async () => {
     const prompts: string[] = [];
+    const lastUserMessages: string[] = [];
     mockedCreateProvider.mockResolvedValue({
       name: 'test-provider',
       async *chat(params) {
         prompts.push(params.systemPrompt ?? '');
+        lastUserMessages.push(params.messages.at(-1)?.content ?? '');
         yield 'ok';
       },
       async chatSync() {
@@ -240,8 +242,9 @@ describe('createChatHandler', () => {
     }
 
     expect(events).toEqual([{ content: 'ok' }, { done: true }]);
-    expect(prompts[0]).toContain(`The user is currently on: ${url.slice(0, 2000)} (Pricing)`);
-    expect(prompts[0]).not.toContain(url.slice(0, 2001));
+    expect(lastUserMessages[0]).toContain(`Page: ${url.slice(0, 2000)}`);
+    expect(lastUserMessages[0]).not.toContain(url.slice(0, 2001));
+    expect(prompts[0]).not.toContain('example.com');
   });
 
   it('passes the configured tool timeout into the provider chat params', async () => {
@@ -500,16 +503,19 @@ describe('createChatHandler', () => {
     });
     expect(firstChunk.done).toBe(false);
 
-    // Verify stream completion waits for webhook resolution before sending done: true
+    // The visitor gets done: true right away, but the generator stays open
+    // until the webhook finishes, so serverless runtimes don't cut it off.
     let isStreamFinished = false;
+    const remaining: string[] = [];
     const streamCompletionPromise = (async () => {
-      for await (const _chunk of generator) {
-        // draining remainder
+      for await (const chunk of generator) {
+        remaining.push(chunk);
       }
       isStreamFinished = true;
     })();
 
     await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(remaining.map((chunk) => JSON.parse(chunk))).toContainEqual({ done: true });
     expect(isStreamFinished).toBe(false);
 
     // Resolving fetch allows the generator to finish awaiting pending webhooks

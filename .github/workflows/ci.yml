@@ -41,6 +41,19 @@ jobs:
       - name: Test
         run: pnpm test
 
+  changeset:
+    if: github.event_name == 'pull_request' && github.base_ref == 'dev'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A change under packages/*/src needs a changeset so it shows up in the
+      # next release. `pnpm changeset --empty` covers changes that shouldn't.
+      - name: Changeset for package source changes
+        run: bash .github/scripts/check-changeset.sh origin/${{ github.base_ref }}
+
   e2e:
     runs-on: ubuntu-latest
     steps:

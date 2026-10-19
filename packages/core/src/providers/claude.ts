@@ -147,7 +147,8 @@ export class ClaudeProvider implements AIProvider {
     let toolRounds = 0;
 
     while (true) {
-      const stream = this.client.messages.stream(this.request(params, messages));
+      params.signal?.throwIfAborted();
+      const stream = this.client.messages.stream(this.request(params, messages), { signal: params.signal });
 
       for await (const event of stream) {
         if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
@@ -179,7 +180,8 @@ export class ClaudeProvider implements AIProvider {
     let text = '';
 
     while (true) {
-      const response = await this.client.messages.create(this.request(params, messages));
+      params.signal?.throwIfAborted();
+      const response = await this.client.messages.create(this.request(params, messages), { signal: params.signal });
       this.checkStopReason(response);
       text += textOf(response.content);
 

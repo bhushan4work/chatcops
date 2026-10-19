@@ -63,6 +63,16 @@ describe('Gemini provider helpers', () => {
     });
   });
 
+  it('passes the abort signal in the request config', async () => {
+    const provider = new GeminiProvider({ type: 'gemini', apiKey: 'test-key' });
+    const generate = vi.fn().mockResolvedValue(streamOf(textChunk('Hi')));
+    mockModels(provider, generate);
+    const controller = new AbortController();
+
+    await collect(provider.chat(params({ signal: controller.signal })));
+    expect(generate.mock.calls[0][0].config.abortSignal).toBe(controller.signal);
+  });
+
   it('only uses thinkingLevel on Gemini 3 and later', () => {
     expect(geminiSupportsThinkingLevel('gemini-3.5-flash-lite')).toBe(true);
     expect(geminiSupportsThinkingLevel('gemini-2.5-flash')).toBe(false);

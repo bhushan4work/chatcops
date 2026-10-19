@@ -49,6 +49,10 @@ type FakeResponse = {
   json: (payload: unknown) => FakeResponse;
   write: (chunk: string) => boolean;
   end: () => FakeResponse;
+  writableFinished: boolean;
+  on: (event: string, listener: () => void) => FakeResponse;
+  /** Simulates the visitor disconnecting before the reply is done. */
+  disconnect: () => void;
 };
 
 function createResponse(): { fake: FakeResponse; res: Response } {
@@ -75,9 +79,19 @@ function createResponse(): { fake: FakeResponse; res: Response } {
     },
     end: () => {
       fake.ended = true;
+      fake.writableFinished = true;
       return fake;
     },
+    writableFinished: false,
+    on: (event, listener) => {
+      (listeners[event] ??= []).push(listener);
+      return fake;
+    },
+    disconnect: () => {
+      for (const listener of listeners.close ?? []) listener();
+    },
   };
+  const listeners: Record<string, Array<() => void>> = {};
   return { fake, res: fake as unknown as Response };
 }
 

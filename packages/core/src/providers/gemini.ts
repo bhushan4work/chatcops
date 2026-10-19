@@ -93,6 +93,7 @@ export class GeminiProvider implements AIProvider {
       ...(geminiSupportsThinkingLevel(this.model)
         ? { thinkingConfig: { thinkingLevel: THINKING_LEVELS[this.effort] } }
         : {}),
+      ...(params.signal ? { abortSignal: params.signal } : {}),
     };
   }
 
@@ -102,6 +103,7 @@ export class GeminiProvider implements AIProvider {
     let toolRounds = 0;
 
     while (true) {
+      params.signal?.throwIfAborted();
       const stream = await this.ai.models.generateContentStream({ model: this.model, contents, config });
 
       // Keep every part the model sent (function calls carry thought signatures
@@ -144,6 +146,7 @@ export class GeminiProvider implements AIProvider {
     let text = '';
 
     while (true) {
+      params.signal?.throwIfAborted();
       const response = await this.ai.models.generateContent({ model: this.model, contents, config });
       const parts = partsOf(response);
       text += visibleText(parts);

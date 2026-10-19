@@ -12,6 +12,7 @@ const port = Number(process.env.E2E_PORT ?? 4173);
 const files = {
   '/': ['fixtures/index.html', 'text/html'],
   '/index.html': ['fixtures/index.html', 'text/html'],
+  '/two-widgets.html': ['fixtures/two-widgets.html', 'text/html'],
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -75,6 +76,12 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://localhost:${port}`);
   try {
     if (url.pathname === '/api/chat' && req.method === 'POST') return await chat(req, res);
+
+    if (url.pathname === '/chatcops.esm.js') {
+      const js = await readFile(join(root, 'packages/widget/dist/chatcops.esm.js'));
+      res.writeHead(200, { 'Content-Type': 'text/javascript' });
+      return res.end(js);
+    }
 
     if (url.pathname === '/chatcops.min.js') {
       const js = await readFile(join(root, 'packages/widget/dist/chatcops.min.js'));

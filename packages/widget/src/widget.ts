@@ -4,6 +4,7 @@ import { Panel } from './dom/panel.js';
 import { WelcomeBubble } from './dom/bubble.js';
 import { ChatClient } from './api/client.js';
 import { ConversationStorage } from './storage.js';
+import { claimNamespace, type ClaimedNamespace } from './namespace.js';
 import { applyTheme } from './theme.js';
 import { getWidgetLocale, type WidgetLocaleStrings } from './i18n.js';
 import { PreChatForm } from './dom/prechat-form.js';
@@ -32,6 +33,12 @@ export interface WidgetConfig {
   /** Request/stream inactivity timeout in milliseconds. Defaults to 30000. */
   timeout?: number;
   mode?: 'popup' | 'inline';
+  /**
+   * Names this widget's saved conversation. Set a different one on each widget
+   * when a page has more than one. Without it a single widget uses the default
+   * storage, and a second widget on the page is given its own automatically.
+   */
+  siteId?: string;
   container?: string | HTMLElement;
   theme?: {
     accent?: string;
@@ -84,12 +91,14 @@ type SendRequestOptions = {
 export class Widget {
   private config: WidgetConfig;
   private shadow!: ShadowRoot;
+  private mounted = false;
   private fab?: FAB;
   private panel!: Panel;
   private bubble?: WelcomeBubble;
   private preChatFormEl?: PreChatForm;
   private client: ChatClient;
   private storage: ConversationStorage;
+  private namespace: ClaimedNamespace;
   private locale: WidgetLocaleStrings;
   private conversationId: string;
   private messages: MessageData[] = [];
@@ -109,7 +118,12 @@ export class Widget {
   constructor(config: WidgetConfig) {
     this.config = config;
     this.client = new ChatClient({ apiUrl: config.apiUrl, timeout: config.timeout });
-    this.storage = new ConversationStorage();
+    this.namespace = claimNamespace(
+      config.siteId,
+      config.mode ?? 'popup',
+      () => !this.destroyed && (!this.mounted || this.shadow.host.isConnected)
+    );
+    this.storage = new ConversationStorage(this.namespace.siteId);
     this.locale = getWidgetLocale(config.locale ?? 'en', config.strings);
     this.conversationId = this.storage.getSessionId();
   }
@@ -135,6 +149,7 @@ export class Widget {
     } else {
       this.shadow = createShadowRoot();
     }
+    this.mounted = true;
 
     if (this.config.theme) {
       applyTheme(this.shadow, this.config.theme);
@@ -275,7 +290,8 @@ export class Widget {
     this.bubble?.destroy();
     this.panel.destroy();
     this.fab?.destroy();
-    destroyShadowRoot(this.containerEl);
+    destroyShadowRoot(this.shadow);
+    this.namespace.release();
     this.eventHandlers.clear();
     this.messages = [];
     this.userData = undefined;

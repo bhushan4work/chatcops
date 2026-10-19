@@ -6,7 +6,8 @@ import {
   type ChatMessage,
 } from '@chatcops/core';
 import type { ChatCopsServerConfig, ValidatedChatRequest } from './config.js';
-import { chatRequestSchema, MAX_PAGE_URL_LENGTH } from './config.js';
+import { chatRequestSchema } from './config.js';
+import { VISITOR_CONTEXT_INSTRUCTION, buildVisitorContext, isLocaleTag, withVisitorContext } from './visitor-context.js';
 import { RateLimiter } from './rate-limit.js';
 import { WebhookDispatcher } from './webhook.js';
 
@@ -26,10 +27,17 @@ export function createChatHandler(config: ChatCopsServerConfig) {
   // Periodic cleanup
   const cleanupInterval = setInterval(() => rateLimiter.cleanup(), 60_000);
 
+  /**
+   * Streams one reply. Pass `options.signal` to stop when the visitor goes
+   * away: the provider request is cancelled, nothing more is yielded, and the
+   * partial reply isn't saved.
+   */
   async function* handleChat(
     body: unknown,
-    clientIp?: string
+    clientIp?: string,
+    options: { signal?: AbortSignal } = {}
   ): AsyncGenerator<string> {
+    const { signal } = options;
     const provider = await providerPromise;
     // Validate request
     const parsed = chatRequestSchema.safeParse(body);
@@ -109,34 +117,25 @@ export function createChatHandler(config: ChatCopsServerConfig) {
       }
     }
 
-    // Add page context
-    if (req.pageContext) {
-      // A page URL can be very long (tracking parameters, tokens). The start is all the model needs.
-      const pageUrl = req.pageContext.url.slice(0, MAX_PAGE_URL_LENGTH);
-      systemPrompt += `\n\nThe user is currently on: ${pageUrl} (${req.pageContext.title})`;
-      if (req.pageContext.description) {
-        systemPrompt += `\nPage description: ${req.pageContext.description}`;
-      }
+    // Visitor-supplied page context and pre-chat answers never go into the
+    // system prompt; see visitor-context.ts.
+    const visitorContext = buildVisitorContext(req);
+    if (visitorContext) {
+      systemPrompt += `\n\n${VISITOR_CONTEXT_INSTRUCTION}`;
     }
 
-    // Add user data from pre-chat form
-    if (req.userData && Object.keys(req.userData).length > 0) {
-      const userInfo = Object.entries(req.userData)
-        .map(([key, val]) => `${key}: ${val}`)
-        .join(', ');
-      systemPrompt += `\n\nUser information: ${userInfo}`;
-    }
-
-    // Add locale info
-    if (req.locale) {
-      systemPrompt += `\n\nRespond in the user's language. Current locale: ${req.locale}`;
+    if (req.locale && isLocaleTag(req.locale)) {
+      systemPrompt += `\n\nReply in the visitor's language. Their browser locale is ${req.locale}.`;
     }
 
     // Get conversation messages for context
     const storedMessages = await conversations.getMessages(req.conversationId);
-    const messages = assistantToReplace
-      ? storedMessages.filter((message) => message.id !== assistantToReplace.id)
-      : storedMessages;
+    const messages = withVisitorContext(
+      assistantToReplace
+        ? storedMessages.filter((message) => message.id !== assistantToReplace.id)
+        : storedMessages,
+      visitorContext
+    );
 
     // Stream response
     let fullResponse = '';
@@ -150,6 +149,7 @@ export function createChatHandler(config: ChatCopsServerConfig) {
         toolTimeoutMs: config.toolTimeoutMs,
         maxTokens: config.maxTokens,
         temperature: config.temperature,
+        signal,
         toolExecutor: async (toolCall) => {
           const tool = toolsByName.get(toolCall.name);
           if (!tool) {
@@ -186,6 +186,7 @@ export function createChatHandler(config: ChatCopsServerConfig) {
           return result;
         },
       })) {
+        if (signal?.aborted) break;
         while (pendingEvents.length > 0) {
           yield pendingEvents.shift()!;
         }
@@ -197,9 +198,19 @@ export function createChatHandler(config: ChatCopsServerConfig) {
         yield pendingEvents.shift()!;
       }
     } catch (err) {
+      if (signal?.aborted) {
+        // The visitor left. Let lead webhooks finish, but write nothing else.
+        await awaitPendingWebhooks(pendingWebhooks);
+        return;
+      }
       console.error('[chatcops] Provider error:', err);
       await awaitPendingWebhooks(pendingWebhooks);
       yield JSON.stringify({ error: 'provider_error' });
+      return;
+    }
+
+    if (signal?.aborted) {
+      await awaitPendingWebhooks(pendingWebhooks);
       return;
     }
 
@@ -218,9 +229,11 @@ export function createChatHandler(config: ChatCopsServerConfig) {
       analytics?.track('message:received', { conversationId: req.conversationId });
     }
 
-    await awaitPendingWebhooks(pendingWebhooks);
-
+    // The reply is finished for the visitor, so say so first. Keeping the generator
+    // open until lead webhooks finish keeps serverless runtimes from cutting
+    // them off once the response ends.
     yield JSON.stringify({ done: true });
+    await awaitPendingWebhooks(pendingWebhooks);
   }
 
   function cleanup() {

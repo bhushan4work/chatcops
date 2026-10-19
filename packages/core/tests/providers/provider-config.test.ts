@@ -308,3 +308,46 @@ describe('OpenAIProvider', () => {
     expect(toolMessages.map((m: { tool_call_id: string }) => m.tool_call_id)).toEqual(['call_a', 'call_b']);
   });
 });
+
+describe('abort signal', () => {
+  it('Claude passes the signal to the SDK and skips the call when already aborted', async () => {
+    const provider = new ClaudeProvider({ type: 'claude', apiKey: 'k' });
+    const stream = vi.fn().mockReturnValue(claudeStream({ stop_reason: 'end_turn', content: [] }));
+    mockClaude(provider, stream);
+    const controller = new AbortController();
+
+    await collect(provider.chat(params({ signal: controller.signal })));
+    expect(stream.mock.calls[0][1]).toEqual({ signal: controller.signal });
+
+    controller.abort();
+    await expect(collect(provider.chat(params({ signal: controller.signal })))).rejects.toThrow();
+    expect(stream).toHaveBeenCalledTimes(1);
+  });
+
+  it('Claude stops before the next tool round once aborted', async () => {
+    const provider = new ClaudeProvider({ type: 'claude', apiKey: 'k' });
+    const controller = new AbortController();
+    const stream = vi.fn().mockReturnValue(claudeStream({
+      stop_reason: 'tool_use',
+      content: [{ type: 'tool_use', id: 't1', name: 'lookup_order', input: { orderId: '1' } }],
+    }));
+    mockClaude(provider, stream);
+    const toolExecutor = vi.fn().mockImplementation(async () => {
+      controller.abort();
+      return { success: true };
+    });
+
+    await expect(collect(provider.chat(params({ tools: [lookupTool], toolExecutor, signal: controller.signal })))).rejects.toThrow();
+    expect(stream).toHaveBeenCalledTimes(1);
+  });
+
+  it('OpenAI passes the signal to the SDK', async () => {
+    const provider = new OpenAIProvider({ type: 'openai', apiKey: 'k' });
+    const create = vi.fn().mockResolvedValue(openAIStream({ choices: [{ delta: {}, finish_reason: 'stop' }] }));
+    mockOpenAI(provider, create);
+    const controller = new AbortController();
+
+    await collect(provider.chat(params({ signal: controller.signal })));
+    expect(create.mock.calls[0][1]).toEqual({ signal: controller.signal });
+  });
+});

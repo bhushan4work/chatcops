@@ -127,24 +127,48 @@ website/    Marketing site + Starlight docs (Astro)
 
 ### Releasing to production
 
-When `dev` is ready to ship:
+```mermaid
+flowchart LR
+  A[PRs merged into dev<br/>with changesets] --> B[release PR<br/>dev to production]
+  B --> C[Release workflow opens<br/>chore: version packages]
+  C --> D[merge it: publish to npm]
+  D --> E[sync PR<br/>production into dev]
+  E --> A
+```
 
-1. Make sure all changes that affect published packages have changesets:
+1. Every PR to `dev` that changes package source (`packages/*/src`) needs a changeset; the `changeset` check in CI fails without one. Create it with:
    ```bash
    pnpm changeset
    ```
-   This creates a changeset file describing the version bump (patch/minor/major) and a summary. Commit it to `dev`.
+   For a change that shouldn't be released (an internal refactor, for example), use `pnpm changeset --empty`.
 
-2. Create a PR from `dev` to `production` and merge it.
+2. When `dev` is ready to ship, a maintainer opens a PR from `dev` to `production` and merges it with a merge commit.
 
-3. The **Release** workflow runs automatically on `production` push:
-   - Builds, typechecks, and tests everything
-   - If unreleased changesets exist, the Changesets action opens a **"Version Packages"** PR on `production` that bumps versions and updates changelogs
-   - Merging that PR triggers the workflow again, which **publishes to npm** (via OIDC trusted publishing)
+3. The **Release** workflow runs on every push to `production`:
+   - It builds, typechecks and tests everything.
+   - If there are unreleased changesets, the Changesets action opens a **"chore: version packages"** PR on `production` that bumps versions and updates changelogs.
+   - Merging that PR runs the workflow again, which **publishes to npm** through OIDC trusted publishing.
 
-4. The website is auto-deployed to Cloudflare Workers by Workers Builds (the `chatcops-website` Worker, config in `website/wrangler.jsonc`). No manual step needed.
+4. After a publish, `dev` has to catch up with the version commit on `production`. The workflow opens a **"sync: production into dev"** PR when the release bot is set up (below). Merge it with a merge commit, not a squash. Without the bot, the job summary shows the command to run instead:
+   ```bash
+   git fetch upstream && git push upstream upstream/production:dev
+   ```
 
-> **Note:** Only maintainers can merge into `production`. If you're a contributor, just make sure your PR to `dev` includes a changeset when needed.
+5. The website is deployed to Cloudflare Workers by Workers Builds (the `chatcops-website` Worker, config in `website/wrangler.jsonc`). No manual step needed.
+
+> **Note:** Only maintainers can merge into `production`. If you're a contributor, make sure your PR to `dev` includes a changeset when it changes a package.
+
+#### Setting up the release bot (maintainers, once)
+
+The sync PR has to be opened by a GitHub App: `dev` requires CI to pass, and a PR opened with the workflow's own `GITHUB_TOKEN` doesn't trigger CI.
+
+1. In the organization settings, open **Developer settings > GitHub Apps > New GitHub App**. Any name works, for example "CoderCops Release Bot". Turn off the webhook.
+2. Under **Repository permissions**, give it **Contents: Read and write** and **Pull requests: Read and write**. Nothing else.
+3. Create it, then **Install App** on `codercops/chatcops` only.
+4. Copy the **App ID** into a repository variable named `RELEASE_BOT_APP_ID` (Settings > Secrets and variables > Actions > Variables).
+5. Generate a private key and paste the whole `.pem` file into a repository secret named `RELEASE_BOT_PRIVATE_KEY`.
+
+The next publish opens the sync PR on its own.
 
 ## Widget development
 
