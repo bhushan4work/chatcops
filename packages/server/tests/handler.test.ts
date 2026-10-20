@@ -181,7 +181,7 @@ describe('createChatHandler', () => {
           input: { city: 'Boston' },
         });
 
-        yield `Forecast: ${(toolResult?.data as { forecast: string }).forecast}`;
+        yield `Forecast: ${(toolResult?.data as { forecast?: string })?.forecast}`;
       },
       async chatSync() {
         return '';
