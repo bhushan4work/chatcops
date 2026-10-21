@@ -11,7 +11,6 @@ export interface SessionClaims {
   exp: number;
   uid?: string;
   tier?: string;
-  [key: string]: unknown;
 }
 
 export type VerifySessionResult =
@@ -27,28 +26,10 @@ export type VerifySessionResult =
     };
 
 export interface VerifySessionOptions {
-  origin?: string;
-  expectedOrigin?: string;
-  org?: string;
-  conversationId?: string;
-  expectedConversationId?: string;
-  cid?: string;
-  clockSkewSec?: number;
-  skewSec?: number;
-  toleranceSec?: number;
-  skew?: number;
+  origin: string | null;
+  conversationId: string;
   now?: number;
-  nowSec?: number;
-}
-
-export interface VerifySessionParams extends VerifySessionOptions {
-  token: string;
-  keys: CryptoKey | readonly CryptoKey[];
-}
-
-export interface SignSessionOptions {
-  claims: SessionClaims | (Omit<SessionClaims, 'v'> & { v?: 1 });
-  keys: CryptoKey | readonly CryptoKey[];
+  clockSkewSec?: number;
 }
 
 const B64URL_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
@@ -196,37 +177,17 @@ export async function importSessionKey(secret: string | Uint8Array): Promise<Cry
  */
 export async function signSession(
   claims: SessionClaims | (Omit<SessionClaims, 'v'> & { v?: 1 }),
-  keys: CryptoKey | readonly CryptoKey[]
-): Promise<string>;
-export async function signSession(
-  options: SignSessionOptions
-): Promise<string>;
-export async function signSession(
-  claimsOrOptions: SessionClaims | (Omit<SessionClaims, 'v'> & { v?: 1 }) | SignSessionOptions,
-  keysParam?: CryptoKey | readonly CryptoKey[]
+  keys: CryptoKey[]
 ): Promise<string> {
-  let claimsInput: SessionClaims | (Omit<SessionClaims, 'v'> & { v?: 1 });
-  let rawKeys: CryptoKey | readonly CryptoKey[];
-
-  if (keysParam !== undefined) {
-    claimsInput = claimsOrOptions as SessionClaims;
-    rawKeys = keysParam;
-  } else {
-    const opts = claimsOrOptions as SignSessionOptions;
-    claimsInput = opts.claims;
-    rawKeys = opts.keys;
-  }
-
-  const keyList = Array.isArray(rawKeys) ? rawKeys : [rawKeys];
-  if (keyList.length === 0) {
+  if (keys.length === 0) {
     throw new Error('At least one key is required to sign');
   }
 
-  const signingKey = keyList[0];
-  const fullClaims: SessionClaims = {
-    ...(claimsInput as unknown as Record<string, unknown>),
-    v: ((claimsInput as Record<string, unknown>).v ?? 1) as 1,
-  } as SessionClaims;
+  const signingKey = keys[0];
+  const fullClaims = {
+    ...(claims as unknown as Record<string, unknown>),
+    v: ((claims as Record<string, unknown>).v ?? 1) as 1,
+  };
 
   const header = {
     alg: 'HS256',
@@ -252,19 +213,19 @@ export async function signSession(
  */
 export async function verifySessionSignature(
   token: string,
-  keys: CryptoKey | readonly CryptoKey[]
+  keys: CryptoKey[]
 ): Promise<boolean> {
   if (typeof token !== 'string') return false;
   const parts = token.split('.');
   if (parts.length !== 3) return false;
   const [headerPart, payloadPart, signaturePart] = parts;
-  if (!headerPart || !payloadPart) {
-    return false;
-  }
+  if (!headerPart || !payloadPart || !signaturePart) return false;
 
   let headerBytes: Uint8Array;
+  let signatureBytes: Uint8Array;
   try {
     headerBytes = base64UrlDecode(headerPart);
+    signatureBytes = base64UrlDecode(signaturePart);
   } catch {
     return false;
   }
@@ -279,17 +240,7 @@ export async function verifySessionSignature(
   const headerObj = header as Record<string, unknown>;
   if (headerObj.alg !== 'HS256') return false;
 
-  if (!signaturePart) return false;
-
-  let signatureBytes: Uint8Array;
-  try {
-    signatureBytes = base64UrlDecode(signaturePart);
-  } catch {
-    return false;
-  }
-
-  const keyList = Array.isArray(keys) ? keys : [keys];
-  if (keyList.length === 0) return false;
+  if (keys.length === 0) return false;
 
   const signingInputBytes = new TextEncoder().encode(`${headerPart}.${payloadPart}`);
   const kidRaw = headerObj.kid;
@@ -300,9 +251,9 @@ export async function verifySessionSignature(
         ? parseInt(kidRaw, 10)
         : undefined;
 
-  if (indexedIdx !== undefined && indexedIdx >= 0 && indexedIdx < keyList.length) {
+  if (indexedIdx !== undefined && indexedIdx >= 0 && indexedIdx < keys.length) {
     try {
-      if (await crypto.subtle.verify('HMAC', keyList[indexedIdx], signatureBytes as BufferSource, signingInputBytes)) {
+      if (await crypto.subtle.verify('HMAC', keys[indexedIdx], signatureBytes as BufferSource, signingInputBytes)) {
         return true;
       }
     } catch {
@@ -310,10 +261,10 @@ export async function verifySessionSignature(
     }
   }
 
-  for (let i = 0; i < keyList.length; i++) {
+  for (let i = 0; i < keys.length; i++) {
     if (i === indexedIdx) continue;
     try {
-      if (await crypto.subtle.verify('HMAC', keyList[i], signatureBytes as BufferSource, signingInputBytes)) {
+      if (await crypto.subtle.verify('HMAC', keys[i], signatureBytes as BufferSource, signingInputBytes)) {
         return true;
       }
     } catch {
@@ -328,40 +279,18 @@ export async function verifySessionSignature(
  * Verifies a session token.
  * 1. Checks compact JWS format (header.payload.signature) and base64url decoding.
  * 2. Verifies header alg is HS256 (rejects none and any other algorithm).
- * 3. Verifies signature over the exact original header.payload bytes.
- *    Tries the indexed key (from kid) first, then remaining keys for rotation.
+ * 3. Verifies signature over the exact original header.payload bytes via verifySessionSignature.
  * 4. Only after signature verification succeeds, validates session claims:
  *    v must be 1; sid, cid, org must be strings; uid and tier (if present) must be strings;
  *    iat and exp must be valid numeric seconds.
- * 5. Enforces expiration with clock skew (default 60s), exact origin matching, and exact conversation ID matching.
+ * 5. Constructs returned claims exclusively from validated fields (never spreads untrusted payload).
+ * 6. Enforces expiration with clock skew (default 60s), exact origin matching, and exact conversation ID matching.
  */
 export async function verifySession(
   token: string,
-  keys: CryptoKey | readonly CryptoKey[],
-  options?: VerifySessionOptions
-): Promise<VerifySessionResult>;
-export async function verifySession(
-  params: VerifySessionParams
-): Promise<VerifySessionResult>;
-export async function verifySession(
-  tokenOrParams: string | VerifySessionParams,
-  keysParam?: CryptoKey | readonly CryptoKey[],
-  optionsParam?: VerifySessionOptions
+  keys: CryptoKey[],
+  options: VerifySessionOptions
 ): Promise<VerifySessionResult> {
-  let token: string;
-  let rawKeys: CryptoKey | readonly CryptoKey[] | undefined;
-  let options: VerifySessionOptions | undefined;
-
-  if (typeof tokenOrParams === 'object' && tokenOrParams !== null && 'token' in tokenOrParams) {
-    token = tokenOrParams.token;
-    rawKeys = tokenOrParams.keys;
-    options = tokenOrParams;
-  } else {
-    token = tokenOrParams as string;
-    rawKeys = keysParam;
-    options = optionsParam;
-  }
-
   if (typeof token !== 'string') {
     return { ok: false, code: 'malformed' };
   }
@@ -406,57 +335,14 @@ export async function verifySession(
   }
 
   let payloadBytes: Uint8Array;
-  let signatureBytes: Uint8Array;
-
   try {
     payloadBytes = base64UrlDecode(payloadPart);
-    signatureBytes = base64UrlDecode(signaturePart);
+    base64UrlDecode(signaturePart);
   } catch {
     return { ok: false, code: 'malformed' };
   }
 
-  const keyList = Array.isArray(rawKeys) ? rawKeys : rawKeys ? [rawKeys] : [];
-  if (keyList.length === 0) {
-    return { ok: false, code: 'bad_signature' };
-  }
-
-  const signingInput = `${headerPart}.${payloadPart}`;
-  const signingInputBytes = new TextEncoder().encode(signingInput);
-
-  const kidRaw = headerObj.kid;
-  const indexedIdx =
-    typeof kidRaw === 'number'
-      ? kidRaw
-      : typeof kidRaw === 'string' && /^\d+$/.test(kidRaw)
-        ? parseInt(kidRaw, 10)
-        : undefined;
-
-  let verified = false;
-
-  // Try the indexed key first
-  if (indexedIdx !== undefined && indexedIdx >= 0 && indexedIdx < keyList.length) {
-    try {
-      verified = await crypto.subtle.verify('HMAC', keyList[indexedIdx], signatureBytes as BufferSource, signingInputBytes);
-    } catch {
-      verified = false;
-    }
-  }
-
-  // If not verified with the indexed key, try remaining keys for rotation
-  if (!verified) {
-    for (let i = 0; i < keyList.length; i++) {
-      if (i === indexedIdx) continue;
-      try {
-        if (await crypto.subtle.verify('HMAC', keyList[i], signatureBytes as BufferSource, signingInputBytes)) {
-          verified = true;
-          break;
-        }
-      } catch {
-        // ignore invalid key
-      }
-    }
-  }
-
+  const verified = await verifySessionSignature(token, keys);
   if (!verified) {
     return { ok: false, code: 'bad_signature' };
   }
@@ -500,39 +386,33 @@ export async function verifySession(
     return { ok: false, code: 'malformed' };
   }
 
+  // Construct returned claims exclusively from validated fields
   const claims: SessionClaims = {
-    ...p,
     v: 1,
     sid: p.sid,
     cid: p.cid,
     org: p.org,
     iat: p.iat,
     exp: p.exp,
+    ...(typeof p.uid === 'string' ? { uid: p.uid } : {}),
+    ...(typeof p.tier === 'string' ? { tier: p.tier } : {}),
   };
 
-  // Expiration check with clock skew (default 60 seconds)
-  const clockSkewSec = options?.clockSkewSec ?? options?.skewSec ?? options?.toleranceSec ?? options?.skew ?? 60;
-  const nowSec =
-    options?.nowSec ??
-    (options?.now !== undefined
-      ? options.now > 1e11
-        ? Math.floor(options.now / 1000)
-        : Math.floor(options.now)
-      : Math.floor(Date.now() / 1000));
+  // Expiration check with clock skew (default 60 seconds), strictly in seconds
+  const clockSkewSec = options.clockSkewSec ?? 60;
+  const nowSec = options.now ?? Math.floor(Date.now() / 1000);
 
   if (nowSec - clockSkewSec > claims.exp) {
     return { ok: false, code: 'expired' };
   }
 
-  // Exact origin matching
-  const expectedOrigin = options?.origin ?? options?.expectedOrigin ?? options?.org;
-  if (expectedOrigin !== undefined && claims.org !== expectedOrigin) {
+  // Exact origin matching (origin: null directly compares claims.org !== null)
+  if (claims.org !== options.origin) {
     return { ok: false, code: 'origin_mismatch' };
   }
 
   // Exact conversation ID matching
-  const expectedCid = options?.conversationId ?? options?.expectedConversationId ?? options?.cid;
-  if (expectedCid !== undefined && claims.cid !== expectedCid) {
+  if (claims.cid !== options.conversationId) {
     return { ok: false, code: 'conversation_mismatch' };
   }
 

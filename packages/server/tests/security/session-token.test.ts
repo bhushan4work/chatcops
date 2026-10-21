@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   type SessionClaims,
+  type VerifySessionOptions,
   base64UrlDecode,
   base64UrlEncode,
   importSessionKey,
@@ -11,6 +12,11 @@ import {
 
 const VALID_SECRET = '01234567890123456789012345678901'; // 32 ASCII bytes
 const ROTATION_SECRET = 'abcdefghijklmnopqrstuvwxyz012345'; // 32 ASCII bytes
+
+const DEFAULT_OPTIONS: VerifySessionOptions = {
+  origin: 'https://example.com',
+  conversationId: 'conv_456',
+};
 
 function validClaims(overrides?: Partial<SessionClaims>): SessionClaims {
   const now = Math.floor(Date.now() / 1000);
@@ -119,10 +125,7 @@ describe('signSession and verifySession round trip', () => {
     expect(typeof token).toBe('string');
     expect(token.split('.')).toHaveLength(3);
 
-    const result = await verifySession(token, [key], {
-      origin: 'https://example.com',
-      conversationId: 'conv_456',
-    });
+    const result = await verifySession(token, [key], DEFAULT_OPTIONS);
 
     expect(result).toEqual({
       ok: true,
@@ -133,42 +136,16 @@ describe('signSession and verifySession round trip', () => {
     });
   });
 
-  it('supports options object argument style for signSession and verifySession', async () => {
-    const key = await importSessionKey(VALID_SECRET);
-    const claims = validClaims();
-
-    const token = await signSession({ claims, keys: [key] });
-    const result = await verifySession({
-      token,
-      keys: [key],
-      origin: 'https://example.com',
-      conversationId: 'conv_456',
-    });
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.claims.sid).toBe('sess_123');
-    }
-  });
-
   it('preserves optional uid and tier claims', async () => {
     const key = await importSessionKey(VALID_SECRET);
     const claims = validClaims({ uid: 'u_1', tier: 'enterprise' });
     const token = await signSession(claims, [key]);
-    const result = await verifySession(token, [key]);
+    const result = await verifySession(token, [key], DEFAULT_OPTIONS);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.claims.uid).toBe('u_1');
       expect(result.claims.tier).toBe('enterprise');
     }
-  });
-
-  it('accepts a single CryptoKey for signSession and verifySession', async () => {
-    const key = await importSessionKey(VALID_SECRET);
-    const claims = validClaims();
-    const token = await signSession(claims, key);
-    const result = await verifySession(token, key);
-    expect(result.ok).toBe(true);
   });
 
   it('throws an error if signSession is called with an empty keys array', async () => {
@@ -180,18 +157,24 @@ describe('signSession and verifySession round trip', () => {
   it('returns bad_signature if verifySession is called with an empty keys array', async () => {
     const key = await importSessionKey(VALID_SECRET);
     const token = await signSession(validClaims(), [key]);
-    expect(await verifySession(token, [])).toEqual({ ok: false, code: 'bad_signature' });
+    expect(await verifySession(token, [], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'bad_signature',
+    });
   });
 
-  it('handles current time in milliseconds or default Date.now()', async () => {
+  it('interprets now strictly as seconds and defaults to current time', async () => {
     const key = await importSessionKey(VALID_SECRET);
-    const token = await signSession(validClaims(), key);
-    // Millisecond timestamp (> 1e11)
-    const resMs = await verifySession(token, key, { now: Date.now() });
-    expect(resMs.ok).toBe(true);
-    // Default Date.now() when options is omitted
-    const resDefault = await verifySession(token, key);
+    const token = await signSession(validClaims(), [key]);
+
+    const resDefault = await verifySession(token, [key], DEFAULT_OPTIONS);
     expect(resDefault.ok).toBe(true);
+
+    const resSec = await verifySession(token, [key], {
+      ...DEFAULT_OPTIONS,
+      now: Math.floor(Date.now() / 1000),
+    });
+    expect(resSec.ok).toBe(true);
   });
 });
 
@@ -203,7 +186,7 @@ describe('expiration and clock skew', () => {
     const claims = validClaims({ iat: now - 3600, exp: now - 120 });
     const token = await signSession(claims, [key]);
 
-    const result = await verifySession(token, [key], { now });
+    const result = await verifySession(token, [key], { ...DEFAULT_OPTIONS, now });
     expect(result).toEqual({ ok: false, code: 'expired' });
   });
 
@@ -214,7 +197,7 @@ describe('expiration and clock skew', () => {
     const claims = validClaims({ iat: now - 3600, exp: now - 30 });
     const token = await signSession(claims, [key]);
 
-    const result = await verifySession(token, [key], { now });
+    const result = await verifySession(token, [key], { ...DEFAULT_OPTIONS, now });
     expect(result.ok).toBe(true);
   });
 
@@ -226,11 +209,11 @@ describe('expiration and clock skew', () => {
     const token = await signSession(claims, [key]);
 
     // Skew 10 seconds: now (1_700_000_000) - 10 > exp (now - 20) -> expired
-    const expired = await verifySession(token, [key], { now, clockSkewSec: 10 });
+    const expired = await verifySession(token, [key], { ...DEFAULT_OPTIONS, now, clockSkewSec: 10 });
     expect(expired).toEqual({ ok: false, code: 'expired' });
 
     // Skew 30 seconds: now (1_700_000_000) - 30 <= exp (now - 20) -> valid
-    const valid = await verifySession(token, [key], { now, clockSkewSec: 30 });
+    const valid = await verifySession(token, [key], { ...DEFAULT_OPTIONS, now, clockSkewSec: 30 });
     expect(valid.ok).toBe(true);
   });
 });
@@ -247,7 +230,7 @@ describe('signature tampering and altered tokens', () => {
     const tamperedPayload = base64UrlEncode(new TextEncoder().encode(JSON.stringify(decoded)));
 
     const tamperedToken = `${header}.${tamperedPayload}.${sig}`;
-    const result = await verifySession(tamperedToken, [key]);
+    const result = await verifySession(tamperedToken, [key], DEFAULT_OPTIONS);
     expect(result).toEqual({ ok: false, code: 'bad_signature' });
   });
 
@@ -261,7 +244,7 @@ describe('signature tampering and altered tokens', () => {
     const tamperedSig = `${flippedChar}${sig.slice(1)}`;
 
     const tamperedToken = `${header}.${payload}.${tamperedSig}`;
-    const result = await verifySession(tamperedToken, [key]);
+    const result = await verifySession(tamperedToken, [key], DEFAULT_OPTIONS);
     expect(result).toEqual({ ok: false, code: 'bad_signature' });
   });
 
@@ -272,13 +255,13 @@ describe('signature tampering and altered tokens', () => {
 
     const noneHeader = base64UrlEncode(new TextEncoder().encode(JSON.stringify({ alg: 'none', typ: 'JWT' })));
     const noneToken = `${noneHeader}.${payload}.`;
-    const result = await verifySession(noneToken, [key]);
+    const result = await verifySession(noneToken, [key], DEFAULT_OPTIONS);
     expect(result).toEqual({ ok: false, code: 'bad_signature' });
 
     // With dummy signature
     const dummySig = base64UrlEncode(new Uint8Array(32));
     const noneTokenWithSig = `${noneHeader}.${payload}.${dummySig}`;
-    const resultWithSig = await verifySession(noneTokenWithSig, [key]);
+    const resultWithSig = await verifySession(noneTokenWithSig, [key], DEFAULT_OPTIONS);
     expect(resultWithSig).toEqual({ ok: false, code: 'bad_signature' });
   });
 
@@ -289,7 +272,7 @@ describe('signature tampering and altered tokens', () => {
 
     const rsHeader = base64UrlEncode(new TextEncoder().encode(JSON.stringify({ alg: 'RS256', typ: 'JWT' })));
     const rsToken = `${rsHeader}.${payload}.${sig}`;
-    const result = await verifySession(rsToken, [key]);
+    const result = await verifySession(rsToken, [key], DEFAULT_OPTIONS);
     expect(result).toEqual({ ok: false, code: 'bad_signature' });
   });
 
@@ -302,7 +285,7 @@ describe('signature tampering and altered tokens', () => {
     const dummySig = base64UrlEncode(new Uint8Array(32));
 
     const invalidSigToken = `${headerB64}.${badPayloadB64}.${dummySig}`;
-    const result = await verifySession(invalidSigToken, [key]);
+    const result = await verifySession(invalidSigToken, [key], DEFAULT_OPTIONS);
     expect(result).toEqual({ ok: false, code: 'bad_signature' });
   });
 });
@@ -314,6 +297,7 @@ describe('origin and conversation matching', () => {
 
     const result = await verifySession(token, [key], {
       origin: 'https://site-b.com',
+      conversationId: 'conv_456',
     });
     expect(result).toEqual({ ok: false, code: 'origin_mismatch' });
   });
@@ -324,8 +308,20 @@ describe('origin and conversation matching', () => {
 
     const result = await verifySession(token, [key], {
       origin: 'https://site-a.com',
+      conversationId: 'conv_456',
     });
     expect(result.ok).toBe(true);
+  });
+
+  it('returns origin_mismatch when origin is null', async () => {
+    const key = await importSessionKey(VALID_SECRET);
+    const token = await signSession(validClaims({ org: 'https://example.com' }), [key]);
+
+    const result = await verifySession(token, [key], {
+      origin: null,
+      conversationId: 'conv_456',
+    });
+    expect(result).toEqual({ ok: false, code: 'origin_mismatch' });
   });
 
   it('rejects conversation ID mismatch with conversation_mismatch', async () => {
@@ -333,6 +329,7 @@ describe('origin and conversation matching', () => {
     const token = await signSession(validClaims({ cid: 'conv_123' }), [key]);
 
     const result = await verifySession(token, [key], {
+      origin: 'https://example.com',
       conversationId: 'conv_999',
     });
     expect(result).toEqual({ ok: false, code: 'conversation_mismatch' });
@@ -343,9 +340,29 @@ describe('origin and conversation matching', () => {
     const token = await signSession(validClaims({ cid: 'conv_123' }), [key]);
 
     const result = await verifySession(token, [key], {
+      origin: 'https://example.com',
       conversationId: 'conv_123',
     });
     expect(result.ok).toBe(true);
+  });
+
+  it('never returns arbitrary extra payload claims', async () => {
+    const key = await importSessionKey(VALID_SECRET);
+    const claimsWithExtra = {
+      ...validClaims(),
+      extraClaim: 'untrusted_data',
+      role: 'admin',
+    };
+    // @ts-expect-error extra properties tested
+    const token = await signSession(claimsWithExtra, [key]);
+    const result = await verifySession(token, [key], DEFAULT_OPTIONS);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect('extraClaim' in result.claims).toBe(false);
+      expect('role' in result.claims).toBe(false);
+      expect((result.claims as Record<string, unknown>).extraClaim).toBeUndefined();
+      expect((result.claims as Record<string, unknown>).role).toBeUndefined();
+    }
   });
 });
 
@@ -359,7 +376,7 @@ describe('key rotation', () => {
 
     // Verifier has rotated keys: [newKey, oldKey]
     // Indexed key keys[0] (newKey) fails, but keys[1] (oldKey) succeeds
-    const result = await verifySession(oldToken, [newKey, oldKey]);
+    const result = await verifySession(oldToken, [newKey, oldKey], DEFAULT_OPTIONS);
     expect(result.ok).toBe(true);
   });
 
@@ -368,7 +385,7 @@ describe('key rotation', () => {
     const newKey = await importSessionKey(ROTATION_SECRET);
 
     const newToken = await signSession(validClaims(), [newKey, oldKey]);
-    const result = await verifySession(newToken, [newKey, oldKey]);
+    const result = await verifySession(newToken, [newKey, oldKey], DEFAULT_OPTIONS);
     expect(result.ok).toBe(true);
   });
 
@@ -377,7 +394,7 @@ describe('key rotation', () => {
     const unrelatedKey = await importSessionKey('another-32-byte-secret-for-chatc');
 
     const token = await signSession(validClaims(), [oldKey]);
-    const result = await verifySession(token, [unrelatedKey]);
+    const result = await verifySession(token, [unrelatedKey], DEFAULT_OPTIONS);
     expect(result).toEqual({ ok: false, code: 'bad_signature' });
   });
 });
@@ -386,24 +403,48 @@ describe('malformed tokens and claims', () => {
   it('rejects non-string tokens as malformed', async () => {
     const key = await importSessionKey(VALID_SECRET);
     // @ts-expect-error testing invalid argument type
-    expect(await verifySession(undefined, [key])).toEqual({ ok: false, code: 'malformed' });
+    expect(await verifySession(undefined, [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
     // @ts-expect-error testing invalid argument type
-    expect(await verifySession(null, [key])).toEqual({ ok: false, code: 'malformed' });
+    expect(await verifySession(null, [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
     // @ts-expect-error testing invalid argument type
-    expect(await verifySession(12345, [key])).toEqual({ ok: false, code: 'malformed' });
+    expect(await verifySession(12345, [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
   });
 
   it('rejects tokens that do not have 3 parts', async () => {
     const key = await importSessionKey(VALID_SECRET);
-    expect(await verifySession('part1.part2', [key])).toEqual({ ok: false, code: 'malformed' });
-    expect(await verifySession('p1.p2.p3.p4', [key])).toEqual({ ok: false, code: 'malformed' });
-    expect(await verifySession('', [key])).toEqual({ ok: false, code: 'malformed' });
-    expect(await verifySession('..', [key])).toEqual({ ok: false, code: 'malformed' });
+    expect(await verifySession('part1.part2', [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
+    expect(await verifySession('p1.p2.p3.p4', [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
+    expect(await verifySession('', [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
+    expect(await verifySession('..', [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
   });
 
   it('rejects invalid base64url encoding as malformed', async () => {
     const key = await importSessionKey(VALID_SECRET);
-    expect(await verifySession('invalid!base64.valid.sig', [key])).toEqual({ ok: false, code: 'malformed' });
+    expect(await verifySession('invalid!base64.valid.sig', [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
   });
 
   it('rejects invalid JSON in header as malformed', async () => {
@@ -411,13 +452,13 @@ describe('malformed tokens and claims', () => {
     const badHeader = base64UrlEncode(new TextEncoder().encode('{ not valid json }'));
     const dummy = base64UrlEncode(new TextEncoder().encode('{}'));
     const dummySig = base64UrlEncode(new Uint8Array(32));
-    expect(await verifySession(`${badHeader}.${dummy}.${dummySig}`, [key])).toEqual({
+    expect(await verifySession(`${badHeader}.${dummy}.${dummySig}`, [key], DEFAULT_OPTIONS)).toEqual({
       ok: false,
       code: 'malformed',
     });
 
     const arrayHeader = base64UrlEncode(new TextEncoder().encode('[1, 2, 3]'));
-    expect(await verifySession(`${arrayHeader}.${dummy}.${dummySig}`, [key])).toEqual({
+    expect(await verifySession(`${arrayHeader}.${dummy}.${dummySig}`, [key], DEFAULT_OPTIONS)).toEqual({
       ok: false,
       code: 'malformed',
     });
@@ -428,7 +469,7 @@ describe('malformed tokens and claims', () => {
     const headerB64 = base64UrlEncode(new TextEncoder().encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })));
     const dummySig = base64UrlEncode(new Uint8Array(32));
     // Invalid base64url in payload
-    expect(await verifySession(`${headerB64}.not!b64.${dummySig}`, [key])).toEqual({
+    expect(await verifySession(`${headerB64}.not!b64.${dummySig}`, [key], DEFAULT_OPTIONS)).toEqual({
       ok: false,
       code: 'malformed',
     });
@@ -438,7 +479,7 @@ describe('malformed tokens and claims', () => {
     const signingInput = `${headerB64}.${nonJsonPayloadB64}`;
     const sigBuf = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signingInput));
     const sigB64 = base64UrlEncode(new Uint8Array(sigBuf));
-    expect(await verifySession(`${headerB64}.${nonJsonPayloadB64}.${sigB64}`, [key])).toEqual({
+    expect(await verifySession(`${headerB64}.${nonJsonPayloadB64}.${sigB64}`, [key], DEFAULT_OPTIONS)).toEqual({
       ok: false,
       code: 'malformed',
     });
@@ -448,7 +489,7 @@ describe('malformed tokens and claims', () => {
     const arrayInput = `${headerB64}.${arrayPayloadB64}`;
     const arraySigBuf = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(arrayInput));
     const arraySigB64 = base64UrlEncode(new Uint8Array(arraySigBuf));
-    expect(await verifySession(`${headerB64}.${arrayPayloadB64}.${arraySigB64}`, [key])).toEqual({
+    expect(await verifySession(`${headerB64}.${arrayPayloadB64}.${arraySigB64}`, [key], DEFAULT_OPTIONS)).toEqual({
       ok: false,
       code: 'malformed',
     });
@@ -458,7 +499,10 @@ describe('malformed tokens and claims', () => {
     const key = await importSessionKey(VALID_SECRET);
     // @ts-expect-error testing invalid claim
     const token = await signSession({ ...validClaims(), v: 2 }, [key]);
-    expect(await verifySession(token, [key])).toEqual({ ok: false, code: 'malformed' });
+    expect(await verifySession(token, [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
   });
 
   it('rejects claims with missing or non-string sid, cid, org', async () => {
@@ -466,7 +510,10 @@ describe('malformed tokens and claims', () => {
     for (const field of ['sid', 'cid', 'org'] as const) {
       // @ts-expect-error testing invalid claim
       const token = await signSession({ ...validClaims(), [field]: 12345 }, [key]);
-      expect(await verifySession(token, [key])).toEqual({ ok: false, code: 'malformed' });
+      expect(await verifySession(token, [key], DEFAULT_OPTIONS)).toEqual({
+        ok: false,
+        code: 'malformed',
+      });
     }
   });
 
@@ -474,26 +521,41 @@ describe('malformed tokens and claims', () => {
     const key = await importSessionKey(VALID_SECRET);
     // @ts-expect-error testing invalid claim
     const token1 = await signSession({ ...validClaims(), uid: 123 }, [key]);
-    expect(await verifySession(token1, [key])).toEqual({ ok: false, code: 'malformed' });
+    expect(await verifySession(token1, [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
 
     // @ts-expect-error testing invalid claim
     const token2 = await signSession({ ...validClaims(), tier: true }, [key]);
-    expect(await verifySession(token2, [key])).toEqual({ ok: false, code: 'malformed' });
+    expect(await verifySession(token2, [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
   });
 
   it('rejects non-numeric or non-finite iat or exp', async () => {
     const key = await importSessionKey(VALID_SECRET);
     // @ts-expect-error testing invalid claim
     const token1 = await signSession({ ...validClaims(), iat: 'not a number' }, [key]);
-    expect(await verifySession(token1, [key])).toEqual({ ok: false, code: 'malformed' });
+    expect(await verifySession(token1, [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
 
     // @ts-expect-error testing invalid claim
     const token2 = await signSession({ ...validClaims(), exp: Number.POSITIVE_INFINITY }, [key]);
-    expect(await verifySession(token2, [key])).toEqual({ ok: false, code: 'malformed' });
+    expect(await verifySession(token2, [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
 
     // @ts-expect-error testing invalid claim
     const token3 = await signSession({ ...validClaims(), exp: Number.NaN }, [key]);
-    expect(await verifySession(token3, [key])).toEqual({ ok: false, code: 'malformed' });
+    expect(await verifySession(token3, [key], DEFAULT_OPTIONS)).toEqual({
+      ok: false,
+      code: 'malformed',
+    });
   });
 });
 
@@ -527,7 +589,7 @@ describe('RFC 7515 Appendix A.1 test vector', () => {
     const key = await importSessionKey(keyBytes);
 
     // Calling verifySession validates signature successfully, but then strictly rejects non-session claims as malformed
-    const result = await verifySession(RFC_TOKEN, [key]);
+    const result = await verifySession(RFC_TOKEN, [key], DEFAULT_OPTIONS);
     expect(result).toEqual({ ok: false, code: 'malformed' });
   });
 
@@ -542,7 +604,7 @@ describe('RFC 7515 Appendix A.1 test vector', () => {
     const valid = await verifySessionSignature(tamperedToken, [key]);
     expect(valid).toBe(false);
 
-    const result = await verifySession(tamperedToken, [key]);
+    const result = await verifySession(tamperedToken, [key], DEFAULT_OPTIONS);
     expect(result).toEqual({ ok: false, code: 'bad_signature' });
   });
 
