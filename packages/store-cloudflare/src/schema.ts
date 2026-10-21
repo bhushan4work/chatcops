@@ -24,7 +24,7 @@ export async function initializeSchema(db: D1Database): Promise<void> {
     .first<{ value?: string }>();
   if (!row) {
     await db
-      .prepare('INSERT INTO chatcops_meta (key, value) VALUES (?, ?)')
+      .prepare('INSERT INTO chatcops_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING')
       .bind('schema_version', String(SCHEMA_VERSION))
       .run();
   } else if (Number(row.value) > SCHEMA_VERSION) {
@@ -32,10 +32,13 @@ export async function initializeSchema(db: D1Database): Promise<void> {
   }
 }
 
-const initializedDatabases = new WeakSet<D1Database>();
+const initializingDatabases = new WeakMap<D1Database, Promise<void>>();
 
 export async function ensureSchema(db: D1Database): Promise<void> {
-  if (initializedDatabases.has(db)) return;
-  await initializeSchema(db);
-  initializedDatabases.add(db);
+  let promise = initializingDatabases.get(db);
+  if (!promise) {
+    promise = initializeSchema(db);
+    initializingDatabases.set(db, promise);
+  }
+  return promise;
 }

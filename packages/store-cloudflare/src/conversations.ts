@@ -112,6 +112,9 @@ export class CloudflareConversations implements ConversationStore {
     const maxAttempts = 50;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 5 + Math.random() * 15));
+      }
       const current = await this.db
         .prepare(`
           SELECT version, metadata,
@@ -187,13 +190,12 @@ export class CloudflareConversations implements ConversationStore {
         const changes = results[0]?.meta?.changes ?? 0;
 
         if (changes === 0) {
-          const fresh = await this.db
-            .prepare('SELECT version FROM chatcops_conversations WHERE id = ?')
-            .bind(id)
-            .first<{ version: number }>();
-          const freshVersion = fresh?.version ?? 0;
-
           if (options.expectedVersion !== undefined) {
+            const fresh = await this.db
+              .prepare('SELECT version FROM chatcops_conversations WHERE id = ?')
+              .bind(id)
+              .first<{ version: number }>();
+            const freshVersion = fresh?.version ?? 0;
             throw new ConflictError(id, options.expectedVersion, freshVersion);
           }
           continue;
@@ -202,13 +204,12 @@ export class CloudflareConversations implements ConversationStore {
         return { version: nextVersion };
       } catch (err) {
         if (err instanceof ConflictError) throw err;
-        const fresh = await this.db
-          .prepare('SELECT version FROM chatcops_conversations WHERE id = ?')
-          .bind(id)
-          .first<{ version: number }>();
-        const freshVersion = fresh?.version ?? 0;
-
         if (options.expectedVersion !== undefined) {
+          const fresh = await this.db
+            .prepare('SELECT version FROM chatcops_conversations WHERE id = ?')
+            .bind(id)
+            .first<{ version: number }>();
+          const freshVersion = fresh?.version ?? 0;
           throw new ConflictError(id, options.expectedVersion, freshVersion);
         }
         continue;
