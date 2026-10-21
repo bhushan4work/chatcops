@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ClientIpResolver } from './client-ip.js';
 import type {
   AIProvider,
   Budgets,
@@ -30,8 +31,11 @@ export interface ChatCopsServerConfig {
    * Token, reply and dollar limits per conversation, per IP per day and
    * overall per day, counted in `storage` so they hold across instances. A
    * reply that would go over ends with an error instead of calling the model.
+   * On by default (`DEFAULT_BUDGETS`: 200 replies per conversation, 2M tokens
+   * per IP per day). A scope you set replaces its default, `false` turns a
+   * scope off, and `budgets: false` turns them all off.
    */
-  budgets?: Budgets;
+  budgets?: Budgets | false;
   /**
    * The pre-chat form fields to keep (the `name`s in the widget's
    * `preChatForm.fields`). Other fields a request sends are dropped. Unset
@@ -60,8 +64,25 @@ export interface ChatCopsServerConfig {
    * ones; call it on a schedule (a cron job, a Workers cron trigger).
    */
   retention?: { conversationsDays?: number };
-  /** Allowed CORS origin. Defaults to `'*'`. */
+  /**
+   * The sites that can use the chat: exact origins (`'https://acme.com'`) or
+   * subdomain wildcards (`'https://*.acme.com'`). A browser request from any
+   * other page gets 403 `origin_not_allowed` before the model is called.
+   * Requests without an `Origin` header (curl, your own server) pass: this
+   * stops other sites embedding your bot, not scripts. Defaults to `['*']`.
+   */
+  allowedOrigins?: string[];
+  /** @deprecated Use `allowedOrigins`. Read as a one-item `allowedOrigins`. */
   cors?: string;
+  /**
+   * Reads the visitor's IP for per-IP rate limits and budgets, in the fetch
+   * handlers (`chatcopsVercelHandler`, `chatcopsCloudflareHandler`). Needed
+   * where the handler can't tell on its own: any host other than Vercel or
+   * Cloudflare. Read only a header your platform or proxy sets, never one a
+   * visitor can send. Return `undefined` to skip per-IP limits for a request.
+   * Express uses `req.ip`, which follows its `trust proxy` setting.
+   */
+  clientIp?: ClientIpResolver;
   /** @deprecated The server ignores this. Set the widget's text with its `strings` option. */
   i18n?: { defaultLocale: string; locales: Record<string, LocaleStrings> };
 }
