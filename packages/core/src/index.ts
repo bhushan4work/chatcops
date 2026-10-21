@@ -61,6 +61,7 @@ export type {
   ProviderStepParams,
 } from './providers/index.js';
 export { createProvider, isAIProvider, normalizeHistory, normalizeTurns, trimHistory, estimateTokens } from './providers/index.js';
+export { registerProvider, type ProviderFactory } from './providers/registry.js';
 export { toolInputSchema, legacyParametersToSchema, validateTools, ToolDefinitionError } from './providers/index.js';
 
 // Turn engine

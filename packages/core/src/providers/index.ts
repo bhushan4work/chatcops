@@ -15,4 +15,5 @@ export {
 } from './base.js';
 // ClaudeProvider, OpenAIProvider and GeminiProvider are deliberately not exported
 // here. Each one imports its SDK, which would load for every importer of core.
+export { registerProvider, type ProviderFactory } from './registry.js';
 export { toolInputSchema, legacyParametersToSchema, validateTools, ToolDefinitionError } from './schema.js';

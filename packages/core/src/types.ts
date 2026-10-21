@@ -223,14 +223,19 @@ export interface WebhookConfig {
 export type ProviderEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface ProviderConfig {
-  type: 'claude' | 'openai' | 'gemini';
-  apiKey: string;
+  type: 'claude' | 'openai' | 'gemini' | 'openai-compatible' | (string & {});
+  /** Required for the hosted providers; optional for openai-compatible and custom providers. */
+  apiKey?: string;
   model?: string;
   /**
    * Custom API endpoint, for proxies and OpenAI-compatible servers
    * (Ollama, vLLM, Groq, OpenRouter). Passed to the provider SDK as is.
    */
   baseURL?: string;
+  /** Extra request headers for OpenAI and OpenAI-compatible endpoints. */
+  headers?: Record<string, string>;
+  /** OpenAI providers: omit tools when false. Defaults to true. */
+  supportsTools?: boolean;
   /** OpenAI organization id. Ignored by other providers. */
   organization?: string;
   /**
@@ -240,9 +245,9 @@ export interface ProviderConfig {
    */
   effort?: ProviderEffort;
   /**
-   * OpenAI only: the name of the output token limit sent to the API.
-   * Defaults to `'max_completion_tokens'`. Set `'max_tokens'` for
-   * OpenAI-compatible servers that only accept the old name.
+   * OpenAI providers: the name of the output token limit sent to the API.
+   * Defaults to `'max_completion_tokens'` for openai and `'max_tokens'`
+   * for openai-compatible.
    */
   maxTokensParam?: 'max_completion_tokens' | 'max_tokens';
   /**

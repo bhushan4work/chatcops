@@ -124,32 +124,48 @@ function rejectsStreamOptions(error: unknown): boolean {
 }
 
 export class OpenAIProvider implements AIProvider {
-  name = 'openai';
+  name: string;
   private client: OpenAI;
   readonly model: string;
   private reasoning: boolean;
   private effort: ProviderEffort;
   private maxTokensParam: 'max_completion_tokens' | 'max_tokens';
+  private supportsTools: boolean;
   /** Set once a server rejects `stream_options`; usage isn't asked for after that. */
   private streamUsage = true;
 
-  constructor(config: ProviderConfig) {
+  constructor(config: ProviderConfig, options: { compatible?: boolean } = {}) {
+    this.name = options.compatible ? 'openai-compatible' : 'openai';
+    if (options.compatible) {
+      if (!config.baseURL?.trim()) throw new Error('openai-compatible requires baseURL');
+      if (!config.model?.trim()) throw new Error('openai-compatible requires model');
+    } else if (!config.apiKey?.trim()) {
+      throw new Error('openai requires apiKey');
+    }
     this.client = new OpenAI({
-      apiKey: config.apiKey,
+      apiKey: config.apiKey || 'chatcops-local',
       ...(config.baseURL ? { baseURL: config.baseURL } : {}),
+      ...(config.headers ? { defaultHeaders: config.headers } : {}),
       ...(config.organization ? { organization: config.organization } : {}),
       ...(config.fetch ? { fetch: config.fetch } : {}),
     });
     this.model = config.model ?? DEFAULT_MODEL;
     this.reasoning = isOpenAIReasoningModel(this.model, config.baseURL);
     this.effort = config.effort ?? DEFAULT_EFFORT;
-    this.maxTokensParam = config.maxTokensParam ?? 'max_completion_tokens';
+    this.maxTokensParam = config.maxTokensParam ?? (options.compatible ? 'max_tokens' : 'max_completion_tokens');
+    this.supportsTools = config.supportsTools ?? true;
   }
 
   private request(
     params: Pick<ProviderStepParams, 'tools' | 'maxTokens' | 'temperature'>,
     messages: OpenAI.Chat.ChatCompletionMessageParam[]
   ) {
+    if (!this.supportsTools && params.tools?.length) {
+      warnOnce(
+        `${this.name}-tools-${this.model}`,
+        `${this.name} model ${this.model} has supportsTools: false, so configured tools are not sent.`
+      );
+    }
     let temperature = params.temperature;
     if (temperature != null && this.reasoning) {
       warnOnce(
@@ -163,7 +179,7 @@ export class OpenAIProvider implements AIProvider {
       model: this.model,
       messages,
       [this.maxTokensParam]: params.maxTokens ?? DEFAULT_MAX_TOKENS,
-      ...(params.tools?.length ? { tools: toOpenAITools(params.tools) } : {}),
+      ...(this.supportsTools && params.tools?.length ? { tools: toOpenAITools(params.tools) } : {}),
       ...(temperature != null ? { temperature } : {}),
       ...(this.reasoning ? { reasoning_effort: this.effort } : {}),
     };

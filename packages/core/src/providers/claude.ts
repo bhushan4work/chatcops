@@ -211,6 +211,7 @@ export class ClaudeProvider implements AIProvider {
   private promptCaching: boolean;
 
   constructor(config: ProviderConfig) {
+    if (!config.apiKey?.trim()) throw new Error('claude requires apiKey');
     this.client = new Anthropic({
       apiKey: config.apiKey,
       ...(config.baseURL ? { baseURL: config.baseURL } : {}),

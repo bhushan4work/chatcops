@@ -177,6 +177,7 @@ export class GeminiProvider implements AIProvider {
   private effort: ProviderEffort;
 
   constructor(config: ProviderConfig) {
+    if (!config.apiKey?.trim()) throw new Error('gemini requires apiKey');
     this.ai = new GoogleGenAI({
       apiKey: config.apiKey,
       ...(config.baseURL || config.fetch
