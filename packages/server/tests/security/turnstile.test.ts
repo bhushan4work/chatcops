@@ -184,6 +184,26 @@ describe('verifyTurnstile', () => {
         errorCodes: ['invalid-input-response'],
       });
     });
+
+    it('returns unavailable with errorCodes when error-codes includes internal-error', async () => {
+      const { fetchFn } = createMockFetch([
+        new Response(
+          JSON.stringify({
+            success: false,
+            'error-codes': ['internal-error'],
+          }),
+          { status: 200 }
+        ),
+      ]);
+
+      const result = await verifyTurnstile('bad-token', baseConfig, { fetch: fetchFn });
+
+      expect(result).toEqual({
+        ok: false,
+        code: 'unavailable',
+        errorCodes: ['internal-error'],
+      });
+    });
   });
 
   describe('hostname and action mismatch', () => {
@@ -318,6 +338,40 @@ describe('verifyTurnstile', () => {
 
       const result = await verifyTurnstile('valid-token', baseConfig, { fetch: fetchFn });
 
+      expect(result).toEqual({
+        ok: false,
+        code: 'unavailable',
+      });
+    });
+
+    it('returns unavailable when fake fetch remains pending until init.signal aborts', async () => {
+      let signalAborted = false;
+      let signalReceived = false;
+
+      const fetchFn = (async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        return new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) {
+            reject(new Error('no signal passed to fetch'));
+            return;
+          }
+          signalReceived = true;
+          signal.addEventListener('abort', () => {
+            signalAborted = true;
+            reject(signal.reason ?? new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+          });
+        });
+      }) as typeof fetch;
+
+      const config: TurnstileConfig = {
+        ...baseConfig,
+        timeoutMs: 20,
+      };
+
+      const result = await verifyTurnstile('valid-token', config, { fetch: fetchFn });
+
+      expect(signalReceived).toBe(true);
+      expect(signalAborted).toBe(true);
       expect(result).toEqual({
         ok: false,
         code: 'unavailable',

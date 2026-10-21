@@ -1,7 +1,10 @@
 export interface TurnstileConfig {
   secretKey: string;
+  /** Expected action to validate against the Turnstile response. */
   action?: string;
+  /** Expected hostnames where the challenge may be solved. */
   expectedHostnames?: string[];
+  /** Timeout in milliseconds for the verification request. Defaults to 5000 ms. */
   timeoutMs?: number;
 }
 
@@ -95,12 +98,18 @@ export async function verifyTurnstile(
     }
 
     if (!payload.success) {
+      const errorCodes = Array.isArray(payload['error-codes'])
+        ? payload['error-codes'].map(String)
+        : undefined;
+
+      const isUnavailable = errorCodes?.includes('internal-error');
+
       const result: TurnstileResult = {
         ok: false,
-        code: 'invalid_token',
+        code: isUnavailable ? 'unavailable' : 'invalid_token',
       };
-      if (Array.isArray(payload['error-codes'])) {
-        result.errorCodes = payload['error-codes'].map(String);
+      if (errorCodes !== undefined) {
+        result.errorCodes = errorCodes;
       }
       return result;
     }
