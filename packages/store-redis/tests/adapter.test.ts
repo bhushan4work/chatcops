@@ -273,7 +273,7 @@ describe.runIf(Boolean(redisUrl))('store edge cases with real redis', () => {
   it('formats slot prefix with and without existing braces', async () => {
     const { formatSlotPrefix } = await import('../src/adapter.js');
     expect(formatSlotPrefix('prefix')).toBe('{prefix}');
-    expect(formatSlotPrefix('{prefix}')).toBe('{prefix}');
+    expect(formatSlotPrefix('{prefix}')).toBe('{{prefix}}');
   });
 
   it('handles storage close with quit method', async () => {

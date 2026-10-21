@@ -199,6 +199,51 @@ function runRegressionSuite(
 
         await storage.conversations.delete(specialId);
       });
+
+      it('handles empty conversations in get() after save({ messages: [] }), append([], and removing last message', async () => {
+        const prefix = `test-conv-empty-${Date.now().toString(36)}`;
+        const storage = redisStorage({ redis, prefix });
+
+        // Case A: save({ messages: [] })
+        const idSave = `empty-save-${Date.now().toString(36)}`;
+        await storage.conversations.save({
+          id: idSave,
+          messages: [],
+          createdAt: 1000,
+          updatedAt: 1000,
+          metadata: { empty: true },
+        });
+        const loadedSave = await storage.conversations.get(idSave);
+        expect(loadedSave).not.toBeNull();
+        expect(loadedSave?.id).toBe(idSave);
+        expect(loadedSave?.messages).toEqual([]);
+        expect(Array.isArray(loadedSave?.messages)).toBe(true);
+        expect(loadedSave?.metadata).toEqual({ empty: true });
+
+        // Case B: append(id, [])
+        const idAppend = `empty-append-${Date.now().toString(36)}`;
+        await storage.conversations.append?.(idAppend, [], { metadata: { source: 'append' } });
+        const loadedAppend = await storage.conversations.get(idAppend);
+        expect(loadedAppend).not.toBeNull();
+        expect(loadedAppend?.id).toBe(idAppend);
+        expect(loadedAppend?.messages).toEqual([]);
+        expect(Array.isArray(loadedAppend?.messages)).toBe(true);
+
+        // Case C: remove the only message
+        const idRemove = `empty-remove-${Date.now().toString(36)}`;
+        await storage.conversations.append?.(idRemove, [msg('m1', 'only message')]);
+        const beforeRemove = await storage.conversations.get(idRemove);
+        expect(beforeRemove?.messages).toHaveLength(1);
+
+        const removed = await storage.conversations.removeMessage?.(idRemove, 'm1');
+        expect(removed).toBe(true);
+
+        const afterRemove = await storage.conversations.get(idRemove);
+        expect(afterRemove).not.toBeNull();
+        expect(afterRemove?.id).toBe(idRemove);
+        expect(afterRemove?.messages).toEqual([]);
+        expect(Array.isArray(afterRemove?.messages)).toBe(true);
+      });
     });
 
     describe('3. Counters fractional increments and expiry derivation', () => {
@@ -249,6 +294,46 @@ function runRegressionSuite(
 
         // Immediate next get returns null
         expect(await storage.counters?.get(key)).toBeNull();
+      });
+
+      it('retains original expiry when increment is called with 0 ttl on existing counter', async () => {
+        const prefix = `test-cnt-zero-exist-${Date.now().toString(36)}`;
+        const storage = redisStorage({ redis, prefix });
+        const key = 'exist_cnt';
+
+        const first = await storage.counters?.increment(key, 10, 60_000);
+        expect(first?.value).toBe(10);
+        expect(first?.expiresAt).toBeDefined();
+
+        // Increment existing counter with 0 ttl
+        const second = await storage.counters?.increment(key, 5, 0);
+        expect(second?.value).toBe(15);
+        if (first && second) {
+          expect(Math.abs(second.expiresAt - first.expiresAt)).toBeLessThanOrEqual(50);
+        }
+
+        // Counter must NOT be deleted
+        const loaded = await storage.counters?.get(key);
+        expect(loaded?.value).toBe(15);
+      });
+
+      it('preserves fractional and large counter precision using string.format', async () => {
+        const prefix = `test-cnt-prec-${Date.now().toString(36)}`;
+        const storage = redisStorage({ redis, prefix });
+
+        const fracKey = 'frac_precision';
+        const fracVal = 0.1234567890123456;
+        const res1 = await storage.counters?.increment(fracKey, fracVal, 60_000);
+        expect(res1?.value).toBeCloseTo(fracVal, 15);
+        const get1 = await storage.counters?.get(fracKey);
+        expect(get1?.value).toBeCloseTo(fracVal, 15);
+
+        const largeKey = 'large_precision';
+        const largeVal = 1234567890123456;
+        const res2 = await storage.counters?.increment(largeKey, largeVal, 60_000);
+        expect(res2?.value).toBe(largeVal);
+        const get2 = await storage.counters?.get(largeKey);
+        expect(get2?.value).toBe(largeVal);
       });
     });
 
@@ -313,6 +398,87 @@ function runRegressionSuite(
 
         // No duplicate IDs across pages
         expect(new Set(allSeenIds).size).toBe(allSeenIds.length);
+      });
+
+      it('supports at least 120 conversations sharing the same updatedAt with ascending tied ids', async () => {
+        const prefix = `test-conv-tied-${Date.now().toString(36)}`;
+        const storage = redisStorage({ redis, prefix });
+
+        const tiedTimestamp = 1700000000000;
+        const total = 120;
+        const expectedIds: string[] = [];
+
+        for (let i = 1; i <= total; i++) {
+          const pad = String(i).padStart(3, '0');
+          const id = `tied_conv_${pad}`;
+          expectedIds.push(id);
+          await storage.conversations.save({
+            id,
+            messages: [msg(`m_${pad}`, `message ${pad}`)],
+            createdAt: tiedTimestamp,
+            updatedAt: tiedTimestamp,
+          });
+        }
+
+        const pageSize = 25;
+        const allFetched: string[] = [];
+        let cursor: string | undefined;
+
+        while (true) {
+          const res = await storage.conversations.list?.({ limit: pageSize, cursor });
+          if (!res?.items || res.items.length === 0) break;
+          allFetched.push(...res.items.map((it) => it.id));
+          if (!res.cursor) break;
+          cursor = res.cursor;
+        }
+
+        expect(allFetched).toHaveLength(total);
+        // Verify tied ids sort ascending, matching memoryStorage
+        expect(allFetched).toEqual(expectedIds);
+        // Verify no duplicate entries
+        expect(new Set(allFetched).size).toBe(total);
+      });
+
+      it('batches purge operations without passing unbounded keys', async () => {
+        const prefix = `test-conv-purge-${Date.now().toString(36)}`;
+        const storage = redisStorage({ redis, prefix });
+
+        const oldTime = 100000;
+        for (let i = 1; i <= 105; i++) {
+          const id = `purge_${i}_${Date.now().toString(36)}`;
+          await storage.conversations.save({
+            id,
+            messages: [msg(`m_${i}`, 'msg')],
+            createdAt: oldTime,
+            updatedAt: oldTime,
+          });
+        }
+
+        const purged = await storage.conversations.purge?.(oldTime + 1000);
+        expect(purged).toBe(105);
+
+        const remaining = await storage.conversations.list?.({ limit: 10 });
+        expect(remaining?.items).toHaveLength(0);
+      });
+    });
+
+    describe('6. Prefix isolation between x and {x}', () => {
+      it('ensures prefixes x and {x} generate distinct namespaces', async () => {
+        const uniqueKey = `cnt_${Date.now().toString(36)}`;
+        const s1 = redisStorage({ redis, prefix: 'x' });
+        const s2 = redisStorage({ redis, prefix: '{x}' });
+
+        await s1.kv?.set(uniqueKey, 'value-from-x');
+        await s2.kv?.set(uniqueKey, 'value-from-brace-x');
+
+        expect(await s1.kv?.get(uniqueKey)).toBe('value-from-x');
+        expect(await s2.kv?.get(uniqueKey)).toBe('value-from-brace-x');
+
+        await s1.counters?.increment(uniqueKey, 10, 60_000);
+        await s2.counters?.increment(uniqueKey, 20, 60_000);
+
+        expect((await s1.counters?.get(uniqueKey))?.value).toBe(10);
+        expect((await s2.counters?.get(uniqueKey))?.value).toBe(20);
       });
     });
   });

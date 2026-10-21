@@ -1,23 +1,7 @@
 import type { IoRedisLike, RedisLike, RedisSetOptions } from './types.js';
 
 /**
- * Safely parses a JSON string into type T, or returns the original value if it is
- * already parsed or not valid JSON.
- */
-export function parseJson<T>(value: unknown): T {
-  if (value === null || value === undefined) return null as T;
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value) as T;
-    } catch {
-      return value as unknown as T;
-    }
-  }
-  return value as T;
-}
-
-/**
- * Safely decodes a result from an eval script.
+ * Safely decodes a result from an eval script or parses a JSON string.
  * If the client (like @upstash/redis) already automatically deserialized the result
  * from JSON, returns it directly. If it is a JSON string (like raw responses from ioredis),
  * parses it into the target type.
@@ -35,12 +19,25 @@ export function decodeEvalResult<T>(value: unknown): T {
 }
 
 /**
+ * Consolidated internal alias for JSON string parsing.
+ */
+export const parseJson = decodeEvalResult;
+
+/**
+ * Normalizes an unknown value into an array, falling back to an empty array
+ * if the value is nullish or was encoded as an empty table/object by Lua cjson.
+ */
+export function normalizeList<T>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  return [];
+}
+
+/**
  * Formats a prefix into a stable Redis Cluster hash slot tag.
+ * Always wraps the prefix in braces so different prefixes like 'x' and '{x}'
+ * remain isolated while co-locating keys within each prefix into a single hash slot.
  */
 export function formatSlotPrefix(prefix: string): string {
-  if (prefix.startsWith('{') && prefix.endsWith('}')) {
-    return prefix;
-  }
   return `{${prefix}}`;
 }
 

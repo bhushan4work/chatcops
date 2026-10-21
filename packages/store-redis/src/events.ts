@@ -1,5 +1,5 @@
 import type { AnalyticsEvent, EventCount, EventQuery, EventSink } from '@chatcops/core';
-import { decodeEvalResult, formatSlotPrefix } from './adapter.js';
+import { decodeEvalResult, formatSlotPrefix, normalizeList } from './adapter.js';
 import type { RedisLike } from './types.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -154,8 +154,8 @@ export class RedisEventSink implements EventSink {
       [fromHour, toHour]
     );
 
-    const hours = decodeEvalResult<string[]>(rawHours);
-    if (!Array.isArray(hours) || hours.length === 0) {
+    const hours = normalizeList<string>(decodeEvalResult<string[]>(rawHours));
+    if (hours.length === 0) {
       return [];
     }
 
@@ -174,8 +174,10 @@ export class RedisEventSink implements EventSink {
       scriptArgs
     );
 
-    const results = decodeEvalResult<[number, string, number][]>(rawCounts);
-    if (!Array.isArray(results)) {
+    const results = normalizeList<[number, string, number]>(
+      decodeEvalResult<[number, string, number][]>(rawCounts)
+    );
+    if (results.length === 0) {
       return [];
     }
 

@@ -9,33 +9,29 @@ local ttl = tonumber(ARGV[2])
 local serverTime = redis.call('TIME')
 local now = tonumber(serverTime[1]) * 1000 + math.floor(tonumber(serverTime[2]) / 1000)
 
-if ttl <= 0 then
-  local pttl = redis.call('PTTL', KEYS[1])
-  local newVal = by
-  if pttl >= 0 then
-    local current = redis.call('HGET', KEYS[1], 'value')
-    if current then
-      newVal = tonumber(current) + by
-    end
-    redis.call('DEL', KEYS[1])
-  end
-  return cjson.encode({ tostring(newVal), tostring(now) })
-end
-
 local pttl = redis.call('PTTL', KEYS[1])
 
-if pttl < 0 then
-  local newVal = by
-  local expiresAt = now + ttl
-  redis.call('HSET', KEYS[1], 'value', tostring(newVal), 'expiresAt', tostring(expiresAt))
-  redis.call('PEXPIRE', KEYS[1], ttl)
-  return cjson.encode({ tostring(newVal), tostring(expiresAt) })
-else
+if pttl >= 0 then
   local current = redis.call('HGET', KEYS[1], 'value')
   local newVal = (current and tonumber(current) or 0) + by
   local expiresAt = now + pttl
-  redis.call('HSET', KEYS[1], 'value', tostring(newVal), 'expiresAt', tostring(expiresAt))
-  return cjson.encode({ tostring(newVal), tostring(expiresAt) })
+  local newValStr = string.format('%.17g', newVal)
+  local expiresAtStr = string.format('%.17g', expiresAt)
+  redis.call('HSET', KEYS[1], 'value', newValStr, 'expiresAt', expiresAtStr)
+  return cjson.encode({ newValStr, expiresAtStr })
+else
+  local newVal = by
+  local newValStr = string.format('%.17g', newVal)
+  if ttl <= 0 then
+    local expiresAtStr = string.format('%.17g', now)
+    return cjson.encode({ newValStr, expiresAtStr })
+  else
+    local expiresAt = now + ttl
+    local expiresAtStr = string.format('%.17g', expiresAt)
+    redis.call('HSET', KEYS[1], 'value', newValStr, 'expiresAt', expiresAtStr)
+    redis.call('PEXPIRE', KEYS[1], ttl)
+    return cjson.encode({ newValStr, expiresAtStr })
+  end
 end
 `;
 
@@ -53,8 +49,11 @@ if not val then
   return nil
 end
 
+local numVal = tonumber(val)
+local valStr = numVal and string.format('%.17g', numVal) or tostring(val)
 local expiresAt = now + pttl
-return cjson.encode({ tostring(val), tostring(expiresAt) })
+local expiresAtStr = string.format('%.17g', expiresAt)
+return cjson.encode({ valStr, expiresAtStr })
 `;
 
 export class RedisCounterStore implements CounterStore {

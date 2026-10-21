@@ -7,7 +7,7 @@ import {
   type ConversationSummary,
   type ListQuery,
 } from '@chatcops/core';
-import { decodeEvalResult, formatSlotPrefix } from './adapter.js';
+import { decodeEvalResult, formatSlotPrefix, normalizeList } from './adapter.js';
 import type { RedisLike } from './types.js';
 
 const GET_SCRIPT = `
@@ -16,7 +16,12 @@ if #meta == 0 then
   return nil
 end
 local messages = redis.call('LRANGE', KEYS[2], 0, -1)
-return cjson.encode({ meta = meta, messages = messages })
+local metaJson = cjson.encode(meta)
+local msgsJson = '[]'
+if #messages > 0 then
+  msgsJson = cjson.encode(messages)
+end
+return '{"meta":' .. metaJson .. ',"messages":' .. msgsJson .. '}'
 `;
 
 const SAVE_SCRIPT = `
@@ -236,7 +241,7 @@ return 1
 `;
 
 const PURGE_IDS_SCRIPT = `
-local ids = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', '(' .. ARGV[1])
+local ids = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', '(' .. ARGV[1], 'LIMIT', 0, tonumber(ARGV[2]))
 if #ids == 0 then
   return '[]'
 end
@@ -251,24 +256,95 @@ for i = 2, #KEYS do
   redis.call('DEL', KEYS[i])
 end
 
-for i = 2, numIds + 1 do
-  redis.call('ZREM', zsetKey, ARGV[i])
+for i = 1, numIds do
+  redis.call('ZREM', zsetKey, ARGV[1 + i])
 end
 
 return numIds
 `;
 
 const LIST_IDS_SCRIPT = `
-local maxScore = ARGV[1]
-local minScore = ARGV[2]
-local offset = tonumber(ARGV[3])
-local count = tonumber(ARGV[4])
+local zsetKey = KEYS[1]
+local limit = tonumber(ARGV[1])
+local cursorScoreStr = ARGV[2]
+local cursorId = ARGV[3]
+local updatedAfterStr = ARGV[4]
 
-local ids = redis.call('ZREVRANGEBYSCORE', KEYS[1], maxScore, minScore, 'LIMIT', offset, count)
-if #ids == 0 then
+local minScore = '-inf'
+if updatedAfterStr ~= '' then
+  minScore = '(' .. updatedAfterStr
+end
+
+local results = {}
+local needed = limit + 1
+local currScore = nil
+
+if cursorScoreStr ~= '' and cursorId ~= '' then
+  local cursorScore = tonumber(cursorScoreStr)
+  local rank = redis.call('ZRANK', zsetKey, cursorId)
+  local startRank = nil
+  if rank then
+    startRank = rank + 1
+  else
+    local members = redis.call('ZRANGEBYSCORE', zsetKey, cursorScore, cursorScore)
+    for _, m in ipairs(members) do
+      if m > cursorId then
+        startRank = redis.call('ZRANK', zsetKey, m)
+        break
+      end
+    end
+  end
+
+  if startRank then
+    local chunk = redis.call('ZRANGE', zsetKey, startRank, startRank + needed - 1, 'WITHSCORES')
+    for i = 1, #chunk, 2 do
+      local id = chunk[i]
+      local s = tonumber(chunk[i + 1])
+      if s == cursorScore then
+        table.insert(results, { id, s })
+        if #results == needed then
+          break
+        end
+      else
+        break
+      end
+    end
+  end
+  currScore = cursorScore
+else
+  local top = redis.call('ZREVRANGEBYSCORE', zsetKey, '+inf', minScore, 'LIMIT', 0, 1, 'WITHSCORES')
+  if #top > 0 then
+    currScore = tonumber(top[2])
+    local chunk = redis.call('ZRANGEBYSCORE', zsetKey, currScore, currScore, 'LIMIT', 0, needed)
+    for _, id in ipairs(chunk) do
+      table.insert(results, { id, currScore })
+      if #results == needed then
+        break
+      end
+    end
+  end
+end
+
+while #results < needed and currScore ~= nil do
+  local nextTop = redis.call('ZREVRANGEBYSCORE', zsetKey, '(' .. currScore, minScore, 'LIMIT', 0, 1, 'WITHSCORES')
+  if #nextTop == 0 then
+    break
+  end
+  currScore = tonumber(nextTop[2])
+  local countNeeded = needed - #results
+  local chunk = redis.call('ZRANGEBYSCORE', zsetKey, currScore, currScore, 'LIMIT', 0, countNeeded)
+  for _, id in ipairs(chunk) do
+    table.insert(results, { id, currScore })
+    if #results == needed then
+      break
+    end
+  end
+end
+
+if #results == 0 then
   return '[]'
 end
-return cjson.encode(ids)
+return cjson.encode(results)
 `;
 
 const LIST_ITEMS_SCRIPT = `
@@ -287,7 +363,7 @@ for i = 1, numItems do
     table.insert(results, { id, meta, count })
   else
     redis.call('ZREM', zsetKey, id)
-    table.insert(results, { id, nil, 0 })
+    table.insert(results, { id, {}, 0 })
   end
 end
 
@@ -340,15 +416,16 @@ export class RedisConversationStore implements ConversationStore {
 
     if (!raw) return null;
     const res = decodeEvalResult<{ meta: unknown[]; messages: unknown[] } | null>(raw);
-    if (!res?.meta || res.meta.length === 0) return null;
+    const rawMeta = normalizeList(res?.meta);
+    if (rawMeta.length === 0) return null;
 
     const metaMap: Record<string, unknown> = {};
     const metadata: Record<string, unknown> = {};
     let hasMetadata = false;
 
-    for (let i = 0; i < res.meta.length; i += 2) {
-      const k = String(res.meta[i]);
-      const v = res.meta[i + 1];
+    for (let i = 0; i < rawMeta.length; i += 2) {
+      const k = String(rawMeta[i]);
+      const v = rawMeta[i + 1];
       if (k.startsWith('meta:')) {
         const field = k.slice(5);
         try {
@@ -371,7 +448,8 @@ export class RedisConversationStore implements ConversationStore {
       }
     }
 
-    const messages = (res.messages ?? []).map((m) =>
+    const rawMessages = normalizeList(res?.messages);
+    const messages = rawMessages.map((m) =>
       typeof m === 'string' ? JSON.parse(m) : m
     ) as ChatMessage[];
 
@@ -387,7 +465,7 @@ export class RedisConversationStore implements ConversationStore {
 
   async save(conversation: Conversation): Promise<void> {
     const id = conversation.id;
-    const now = Date.now();
+    const updatedAt = conversation.updatedAt ?? Date.now();
     const createdAt = conversation.createdAt ?? 0;
     const metaPairs = this.serializeMetadata(conversation.metadata);
     const numMeta = metaPairs.length / 2;
@@ -396,7 +474,7 @@ export class RedisConversationStore implements ConversationStore {
     await this.redis.eval(
       SAVE_SCRIPT,
       [this.metaKey(id), this.messagesKey(id), this.zsetKey],
-      [id, createdAt, now, this.ttlMs, numMeta, ...metaPairs, ...messagesJson]
+      [id, createdAt, updatedAt, this.ttlMs, numMeta, ...metaPairs, ...messagesJson]
     );
   }
 
@@ -465,55 +543,44 @@ export class RedisConversationStore implements ConversationStore {
   }
 
   async list(query: ListQuery): Promise<{ items: ConversationSummary[]; cursor?: string }> {
-    const minScore =
-      query.updatedAfter !== undefined ? `(${query.updatedAfter}` : '-inf';
-
-    let cursorScore: number | undefined;
-    let cursorId: string | undefined;
+    let cursorScore = '';
+    let cursorId = '';
 
     if (query.cursor) {
       const colonIdx = query.cursor.indexOf(':');
       if (colonIdx !== -1) {
         const s = Number(query.cursor.slice(0, colonIdx));
         if (!Number.isNaN(s)) {
-          cursorScore = s;
+          cursorScore = String(s);
           cursorId = query.cursor.slice(colonIdx + 1);
         }
       }
-      if (cursorScore === undefined || cursorId === undefined) {
+      if (!cursorScore || !cursorId) {
         // Unknown or invalid cursor returns empty items
         return { items: [] };
       }
     }
 
-    // Cursor-based pagination using ZREVRANGEBYSCORE ... LIMIT
-    // If no cursor: maxScore is +inf, offset is 0, limit is query.limit + 1
-    // If cursor: maxScore is cursorScore, scan a bounded window (limit + 50) to advance past cursorId
-    const maxScore = cursorScore !== undefined ? String(cursorScore) : '+inf';
-    const fetchCount = cursorId !== undefined ? query.limit + 50 : query.limit + 1;
+    const updatedAfterStr =
+      query.updatedAfter !== undefined ? String(query.updatedAfter) : '';
 
-    const rawIds = await this.redis.eval<(string | number)[], unknown>(
+    const rawCandidateResults = await this.redis.eval<(string | number)[], unknown>(
       LIST_IDS_SCRIPT,
       [this.zsetKey],
-      [maxScore, minScore, 0, fetchCount]
+      [query.limit, cursorScore, cursorId, updatedAfterStr]
     );
 
-    const ids = decodeEvalResult<string[]>(rawIds);
-    if (!Array.isArray(ids) || ids.length === 0) {
+    const candidates = normalizeList<[string, number]>(
+      decodeEvalResult<[string, number][]>(rawCandidateResults)
+    );
+
+    if (candidates.length === 0) {
       return { items: [] };
     }
 
-    let candidateIds = ids;
-    if (cursorId !== undefined) {
-      const idx = ids.indexOf(cursorId);
-      if (idx === -1) {
-        return { items: [] };
-      }
-      candidateIds = ids.slice(idx + 1);
-    }
-
-    const pageIds = candidateIds.slice(0, query.limit);
-    const hasMore = candidateIds.length > query.limit;
+    const hasMore = candidates.length > query.limit;
+    const pageCandidates = candidates.slice(0, query.limit);
+    const pageIds = pageCandidates.map((c) => c[0]);
 
     if (pageIds.length === 0) {
       return { items: [] };
@@ -531,54 +598,55 @@ export class RedisConversationStore implements ConversationStore {
       scriptArgs
     );
 
-    const results = decodeEvalResult<[string, unknown[] | null, number][]>(rawResults);
+    const results = normalizeList<[string, unknown[], number]>(
+      decodeEvalResult<[string, unknown[], number][]>(rawResults)
+    );
     const items: ConversationSummary[] = [];
 
-    if (results) {
-      for (const [id, rawMeta, messageCount] of results) {
-        if (!rawMeta || rawMeta.length === 0) continue;
+    for (const [id, rawMeta, messageCount] of results) {
+      const metaArray = normalizeList<unknown>(rawMeta);
+      if (metaArray.length === 0) continue;
 
-        const metaMap: Record<string, unknown> = {};
-        const metadata: Record<string, unknown> = {};
-        let hasMetadata = false;
+      const metaMap: Record<string, unknown> = {};
+      const metadata: Record<string, unknown> = {};
+      let hasMetadata = false;
 
-        for (let i = 0; i < rawMeta.length; i += 2) {
-          const k = String(rawMeta[i]);
-          const v = rawMeta[i + 1];
-          if (k.startsWith('meta:')) {
-            const field = k.slice(5);
-            try {
-              metadata[field] = typeof v === 'string' ? JSON.parse(v) : v;
-            } catch {
-              metadata[field] = v;
-            }
-            hasMetadata = true;
-          } else if (k === 'metadata' && !hasMetadata) {
-            try {
-              const parsed = typeof v === 'string' ? JSON.parse(v) : v;
-              if (parsed && typeof parsed === 'object') {
-                Object.assign(metadata, parsed);
-                hasMetadata = true;
-              }
-            } catch {}
-          } else {
-            metaMap[k] = v;
+      for (let i = 0; i < metaArray.length; i += 2) {
+        const k = String(metaArray[i]);
+        const v = metaArray[i + 1];
+        if (k.startsWith('meta:')) {
+          const field = k.slice(5);
+          try {
+            metadata[field] = typeof v === 'string' ? JSON.parse(v) : v;
+          } catch {
+            metadata[field] = v;
           }
+          hasMetadata = true;
+        } else if (k === 'metadata' && !hasMetadata) {
+          try {
+            const parsed = typeof v === 'string' ? JSON.parse(v) : v;
+            if (parsed && typeof parsed === 'object') {
+              Object.assign(metadata, parsed);
+              hasMetadata = true;
+            }
+          } catch {}
+        } else {
+          metaMap[k] = v;
         }
-
-        items.push({
-          id: String(id),
-          createdAt: Number(metaMap.createdAt ?? 0),
-          updatedAt: Number(metaMap.updatedAt ?? 0),
-          messageCount: Number(messageCount),
-          ...(hasMetadata ? { metadata } : {}),
-        });
       }
+
+      items.push({
+        id: String(id),
+        createdAt: Number(metaMap.createdAt ?? 0),
+        updatedAt: Number(metaMap.updatedAt ?? 0),
+        messageCount: Number(messageCount),
+        ...(hasMetadata ? { metadata } : {}),
+      });
     }
 
     if (hasMore && items.length > 0) {
-      const last = items[items.length - 1];
-      const nextCursor = `${last.updatedAt}:${last.id}`;
+      const last = pageCandidates[pageCandidates.length - 1];
+      const nextCursor = `${last[1]}:${last[0]}`;
       return { items, cursor: nextCursor };
     }
 
@@ -586,30 +654,41 @@ export class RedisConversationStore implements ConversationStore {
   }
 
   async purge(before: number): Promise<number> {
-    // Step 1: Query which conversation IDs were updated before cutoff
-    const rawIds = await this.redis.eval<(string | number)[], unknown>(
-      PURGE_IDS_SCRIPT,
-      [this.zsetKey],
-      [before]
-    );
+    let totalPurged = 0;
+    const BATCH_SIZE = 100;
 
-    const ids = decodeEvalResult<string[]>(rawIds);
-    if (!Array.isArray(ids) || ids.length === 0) {
-      return 0;
+    while (true) {
+      // Step 1: Query a batch of conversation IDs updated before cutoff
+      const rawIds = await this.redis.eval<(string | number)[], unknown>(
+        PURGE_IDS_SCRIPT,
+        [this.zsetKey],
+        [before, BATCH_SIZE]
+      );
+
+      const ids = normalizeList<string>(decodeEvalResult<string[]>(rawIds));
+      if (ids.length === 0) {
+        break;
+      }
+
+      // Step 2: Delete keys with all keys explicitly passed in KEYS
+      const metaKeys = ids.map((id) => this.metaKey(id));
+      const msgsKeys = ids.map((id) => this.messagesKey(id));
+      const keys = [this.zsetKey, ...metaKeys, ...msgsKeys];
+      const scriptArgs: (string | number)[] = [ids.length, ...ids];
+
+      const res = await this.redis.eval<(string | number)[], number>(
+        PURGE_EXEC_SCRIPT,
+        keys,
+        scriptArgs
+      );
+
+      totalPurged += Number(res);
+
+      if (ids.length < BATCH_SIZE) {
+        break;
+      }
     }
 
-    // Step 2: Delete keys with all keys explicitly passed in KEYS
-    const metaKeys = ids.map((id) => this.metaKey(id));
-    const msgsKeys = ids.map((id) => this.messagesKey(id));
-    const keys = [this.zsetKey, ...metaKeys, ...msgsKeys];
-    const scriptArgs: (string | number)[] = [ids.length, ...ids];
-
-    const res = await this.redis.eval<(string | number)[], number>(
-      PURGE_EXEC_SCRIPT,
-      keys,
-      scriptArgs
-    );
-
-    return Number(res);
+    return totalPurged;
   }
 }
