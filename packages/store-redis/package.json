@@ -1,7 +1,6 @@
 {
   "name": "@chatcops/store-redis",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.0.0",
   "description": "Redis and Upstash storage for ChatCops",
   "keywords": [
     "chatcops",
@@ -26,7 +25,7 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist *.tsbuildinfo"
@@ -52,5 +51,11 @@
     "url": "git+https://github.com/codercops/chatcops.git",
     "directory": "packages/store-redis"
   },
-  "license": "MIT"
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  }
 }

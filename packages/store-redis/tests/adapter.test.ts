@@ -1,7 +1,8 @@
 import type { ChatMessage, Conversation } from '@chatcops/core';
 import RedisIo from 'ioredis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { fromIoRedis, parseJson, redisStorage } from '../src/index.js';
+import { parseJson } from '../src/adapter.js';
+import { fromIoRedis, redisStorage } from '../src/index.js';
 import type { RedisLike } from '../src/types.js';
 
 const redisUrl = process.env.CHATCOPS_TEST_REDIS_URL;
@@ -215,5 +216,79 @@ describe.runIf(Boolean(redisUrl))('store edge cases with real redis', () => {
     expect(all?.items.length).toBeGreaterThanOrEqual(3);
     const withMeta = all?.items.find((i) => i.id === id1);
     expect(withMeta?.metadata).toEqual({ key1: 'value1' });
+
+    // Purge when nothing is older than 0
+    const purgedNone = await storage.conversations.purge?.(0);
+    expect(purgedNone).toBe(0);
+
+    // Legacy metadata format in Redis hash
+    const legacyId = 'conv-legacy-hash';
+    const legacyMetaKey = `{${prefix}}:conv:${legacyId}:meta`;
+    const legacyMsgsKey = `{${prefix}}:conv:${legacyId}:messages`;
+    const legacyZset = `{${prefix}}:conversations`;
+    await redis.eval(
+      `
+      redis.call('HSET', KEYS[1], 'id', ARGV[1], 'version', 1, 'createdAt', ARGV[2], 'updatedAt', ARGV[2], 'metadata', '{"legacy":true}')
+      redis.call('RPUSH', KEYS[2], '{"id":"m1","role":"user","content":"legacy"}')
+      redis.call('ZADD', KEYS[3], ARGV[2], ARGV[1])
+      return 1
+      `,
+      [legacyMetaKey, legacyMsgsKey, legacyZset],
+      [legacyId, Date.now()]
+    );
+
+    const legacyLoaded = await storage.conversations.get(legacyId);
+    expect(legacyLoaded?.metadata).toEqual({ legacy: true });
+
+    const legacyListed = await storage.conversations.list?.({ limit: 10 });
+    const legacyItem = legacyListed?.items.find((i) => i.id === legacyId);
+    expect(legacyItem?.metadata).toEqual({ legacy: true });
+  });
+
+  it('handles kv raw string and non-envelope responses in get', async () => {
+    let mockVal: unknown = '{"__cc_kv":1,"v":"from-raw-string"}';
+    const mockRedis: RedisLike = {
+      eval: (async () => 1) as RedisLike['eval'],
+      get: (async () => mockVal) as RedisLike['get'],
+      set: async () => 'OK',
+      del: async () => 1,
+    };
+
+    const s = redisStorage({ redis: mockRedis });
+    expect(await s.kv?.get('k')).toBe('from-raw-string');
+
+    // Invalid JSON string
+    mockVal = 'not-json{';
+    expect(await s.kv?.get('k')).toBe('not-json{');
+
+    // JSON string without envelope
+    mockVal = '{"unwrapped":123}';
+    expect(await s.kv?.get('k')).toEqual({ unwrapped: 123 });
+
+    // Raw non-object
+    mockVal = 42;
+    expect(await s.kv?.get('k')).toBe(42);
+  });
+
+  it('formats slot prefix with and without existing braces', async () => {
+    const { formatSlotPrefix } = await import('../src/adapter.js');
+    expect(formatSlotPrefix('prefix')).toBe('{prefix}');
+    expect(formatSlotPrefix('{prefix}')).toBe('{prefix}');
+  });
+
+  it('handles storage close with quit method', async () => {
+    let quitCalled = false;
+    const mockQuit: RedisLike = {
+      eval: (async () => 1) as RedisLike['eval'],
+      get: (async () => null) as RedisLike['get'],
+      set: async () => 'OK',
+      del: async () => 1,
+      quit: async () => {
+        quitCalled = true;
+      },
+    };
+    const s = redisStorage({ redis: mockQuit });
+    await s.close?.();
+    expect(quitCalled).toBe(true);
   });
 });

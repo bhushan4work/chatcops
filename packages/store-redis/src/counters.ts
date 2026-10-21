@@ -1,71 +1,85 @@
 import type { CounterStore, CounterValue } from '@chatcops/core';
+import { decodeEvalResult, formatSlotPrefix } from './adapter.js';
 import type { RedisLike } from './types.js';
 
 const INCREMENT_SCRIPT = `
-local now = tonumber(ARGV[1])
-local by = tonumber(ARGV[2])
-local ttl = tonumber(ARGV[3])
+local by = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
 
-local current = redis.call('HMGET', KEYS[1], 'value', 'expiresAt')
-local val = current[1]
-local exp = current[2]
+local serverTime = redis.call('TIME')
+local now = tonumber(serverTime[1]) * 1000 + math.floor(tonumber(serverTime[2]) / 1000)
 
-if val and exp and tonumber(exp) <= now then
-  redis.call('DEL', KEYS[1])
-  val = nil
-  exp = nil
+if ttl <= 0 then
+  local pttl = redis.call('PTTL', KEYS[1])
+  local newVal = by
+  if pttl >= 0 then
+    local current = redis.call('HGET', KEYS[1], 'value')
+    if current then
+      newVal = tonumber(current) + by
+    end
+    redis.call('DEL', KEYS[1])
+  end
+  return cjson.encode({ tostring(newVal), tostring(now) })
 end
 
-if not val then
+local pttl = redis.call('PTTL', KEYS[1])
+
+if pttl < 0 then
   local newVal = by
   local expiresAt = now + ttl
-  redis.call('HSET', KEYS[1], 'value', newVal, 'expiresAt', expiresAt)
+  redis.call('HSET', KEYS[1], 'value', tostring(newVal), 'expiresAt', tostring(expiresAt))
   redis.call('PEXPIRE', KEYS[1], ttl)
-  return { newVal, expiresAt }
+  return cjson.encode({ tostring(newVal), tostring(expiresAt) })
 else
-  local newVal = tonumber(val) + by
-  local expiresAt = tonumber(exp)
-  redis.call('HSET', KEYS[1], 'value', newVal)
-  return { newVal, expiresAt }
+  local current = redis.call('HGET', KEYS[1], 'value')
+  local newVal = (current and tonumber(current) or 0) + by
+  local expiresAt = now + pttl
+  redis.call('HSET', KEYS[1], 'value', tostring(newVal), 'expiresAt', tostring(expiresAt))
+  return cjson.encode({ tostring(newVal), tostring(expiresAt) })
 end
 `;
 
 const GET_SCRIPT = `
-local now = tonumber(ARGV[1])
-local current = redis.call('HMGET', KEYS[1], 'value', 'expiresAt')
-local val = current[1]
-local exp = current[2]
-
-if not val or not exp then
+local pttl = redis.call('PTTL', KEYS[1])
+if pttl < 0 then
   return nil
 end
 
-if tonumber(exp) <= now then
-  redis.call('DEL', KEYS[1])
+local serverTime = redis.call('TIME')
+local now = tonumber(serverTime[1]) * 1000 + math.floor(tonumber(serverTime[2]) / 1000)
+
+local val = redis.call('HGET', KEYS[1], 'value')
+if not val then
   return nil
 end
 
-return { tonumber(val), tonumber(exp) }
+local expiresAt = now + pttl
+return cjson.encode({ tostring(val), tostring(expiresAt) })
 `;
 
 export class RedisCounterStore implements CounterStore {
+  private readonly slotPrefix: string;
+
   constructor(
     private readonly redis: RedisLike,
-    private readonly prefix: string
-  ) {}
+    prefix: string
+  ) {
+    this.slotPrefix = formatSlotPrefix(prefix);
+  }
 
   private key(key: string): string {
-    return `${this.prefix}:counter:${key}`;
+    return `${this.slotPrefix}:counter:${key}`;
   }
 
   async increment(key: string, by: number, ttlMs: number): Promise<CounterValue> {
-    const now = Date.now();
-    const res = await this.redis.eval<[number, number, number], [number, number]>(
+    const roundedTtl = Math.ceil(ttlMs);
+    const raw = await this.redis.eval<[number, number], unknown>(
       INCREMENT_SCRIPT,
       [this.key(key)],
-      [now, by, ttlMs]
+      [by, roundedTtl]
     );
 
+    const res = decodeEvalResult<[string, string]>(raw);
     return {
       value: Number(res[0]),
       expiresAt: Number(res[1]),
@@ -73,13 +87,14 @@ export class RedisCounterStore implements CounterStore {
   }
 
   async get(key: string): Promise<CounterValue | null> {
-    const now = Date.now();
-    const res = await this.redis.eval<[number], [number, number] | null>(
+    const raw = await this.redis.eval<[], unknown>(
       GET_SCRIPT,
       [this.key(key)],
-      [now]
+      []
     );
 
+    if (!raw) return null;
+    const res = decodeEvalResult<[string, string] | null>(raw);
     if (!res) return null;
 
     return {

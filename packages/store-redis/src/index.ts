@@ -1,5 +1,5 @@
 import type { ChatCopsStorage } from '@chatcops/core';
-import { fromIoRedis, parseJson } from './adapter.js';
+import { fromIoRedis } from './adapter.js';
 import { RedisConversationStore } from './conversations.js';
 import { RedisCounterStore } from './counters.js';
 import { RedisEventSink } from './events.js';
@@ -44,7 +44,6 @@ export function redisStorage(options: RedisStorageOptions): ChatCopsStorage {
 
 export {
   fromIoRedis,
-  parseJson,
   RedisConversationStore,
   RedisCounterStore,
   RedisKeyValueStore,

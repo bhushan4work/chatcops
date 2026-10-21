@@ -46,8 +46,9 @@ const storage = redisStorage({
   conversationTtlMs: 30 * 24 * 60 * 60 * 1000, // default: 30 days
 });
 
+// Pass storage.conversations to conversationStore. The full `storage` option is coming in a future release.
 export const POST = chatcopsVercelHandler({
-  storage,
+  conversationStore: storage.conversations,
   provider: { type: 'openai', apiKey: process.env.OPENAI_API_KEY },
   systemPrompt: 'You are a helpful assistant.',
 });
@@ -72,8 +73,9 @@ const storage = redisStorage({
   prefix: 'chatcops',
 });
 
+// Pass storage.conversations to conversationStore. The full `storage` option is coming in a future release.
 export const POST = chatcopsVercelHandler({
-  storage,
+  conversationStore: storage.conversations,
   provider: { type: 'openai', apiKey: process.env.OPENAI_API_KEY },
   systemPrompt: 'You are a helpful assistant.',
 });
@@ -92,4 +94,9 @@ export const POST = chatcopsVercelHandler({
 Analytics events are stored using **hourly count hashes** rather than capped streams (`XADD`).
 
 - **Why hourly count hashes over streams**: Redis Streams enforce strictly increasing entry IDs, which causes failures when events arrive out-of-order or with client timestamps in the past. Additionally, querying event counts aggregated by hour or day from a stream requires scanning and parsing historical stream logs client-side.
-- **Hourly count hashes**: Events are bucketed by UTC hour (`<prefix>:events:<hour>`) and tracked in a sorted set index (`<prefix>:events:hours`). Each hash stores counts keyed by event type (`HINCRBY`). Queries efficiently read only the active hour buckets within the `[from, to)` window via `ZRANGEBYSCORE` and aggregate into hourly or daily totals directly.
+- **Hourly count hashes**: Events are bucketed by UTC hour (`{<prefix>}:events:<hour>`) and tracked in a sorted set index (`{<prefix>}:events:hours`). Each hash stores counts keyed by event type (`HINCRBY`). Queries efficiently read only the active hour buckets within the query window and aggregate into hourly or daily totals directly.
+- **Hour-rounding query semantics**: Because events are pre-aggregated into 1-hour UTC buckets, queries round `from` down to the start of its UTC hour (`Math.floor(from / HOUR_MS) * HOUR_MS`) and `to` up to the end of its UTC hour (`Math.ceil(to / HOUR_MS) * HOUR_MS`), ensuring partial-hour queries accurately select all overlapping hourly buckets.
+
+## Redis Cluster Compatibility
+
+All keys generated for a given prefix share the `{<prefix>}` hash tag (e.g. `{chatcops}:conversations`, `{chatcops}:conv:<id>:meta`, `{chatcops}:events:hours`), ensuring all keys for that prefix reside in the same Redis Cluster hash slot while preserving isolation between prefixes. Every script-accessed key is explicitly passed through the `KEYS` array.

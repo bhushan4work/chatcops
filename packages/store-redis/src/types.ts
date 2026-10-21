@@ -2,6 +2,8 @@ export interface RedisSetOptions {
   px?: number;
   nx?: boolean;
   ex?: number;
+  xx?: boolean;
+  keepttl?: boolean;
   [key: string]: unknown;
 }
 
@@ -20,9 +22,9 @@ export interface RedisLike {
 }
 
 export interface IoRedisLike {
-  eval(script: string, numKeys: number, ...args: (string | number)[]): Promise<unknown>;
+  eval(script: string, numKeys: number, ...args: unknown[]): Promise<unknown>;
   get(key: string): Promise<string | null>;
-  set(key: string, value: string, ...args: (string | number)[]): Promise<unknown>;
+  set(key: string, value: unknown, ...args: unknown[]): Promise<unknown>;
   del(...keys: string[]): Promise<number>;
   quit?(): Promise<unknown>;
   disconnect?(): void;
