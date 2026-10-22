@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ClientIpResolver } from './client-ip.js';
+import type { TurnstileConfig } from './security/turnstile.js';
 import type {
   AIProvider,
   Budgets,
@@ -83,6 +84,31 @@ export interface ChatCopsServerConfig {
    * Express uses `req.ip`, which follows its `trust proxy` setting.
    */
   clientIp?: ClientIpResolver;
+  /**
+   * Turns on session tokens. `POST <chat url>/session` gives the widget a
+   * token bound to its origin and one conversation, and chat requests send
+   * it as `Authorization: Bearer <token>`, so a guessed conversation id is
+   * useless. Sign with the first secret and verify with all of them, so a
+   * new secret goes first and the old one stays until its tokens expire.
+   * Each needs at least 32 bytes (`openssl rand -base64 32`). Keep them
+   * server side, never in a client bundle.
+   */
+  sessionSecrets?: string[];
+  /** How long a session token lasts, in seconds. Defaults to 900. */
+  sessionTtlSec?: number;
+  /**
+   * Refuse chat requests without a session token (401 `session_required`).
+   * Defaults to true when `sessionSecrets` is set. Set false while widgets
+   * older than 0.6, which don't send tokens, are still out there.
+   */
+  requireSession?: boolean;
+  /**
+   * Cloudflare Turnstile when a session token is issued: `/session` needs a
+   * Turnstile token and checks it with Cloudflare before signing. Refreshing
+   * a session with its previous token skips it. Needs `sessionSecrets`, and
+   * the widget's `turnstileSiteKey`.
+   */
+  turnstile?: TurnstileConfig;
   /**
    * Adds the reply's token usage to the `finish` part of protocol v1
    * streams. Off by default, since visitors can read the stream.
