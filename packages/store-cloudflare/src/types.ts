@@ -34,14 +34,14 @@ export interface D1ExecResult {
 }
 
 export interface KVNamespace {
-  get(key: string, type?: 'text' | 'json' | 'arrayBuffer' | 'stream'): Promise<any>;
+  get(key: string, type?: 'text' | 'json' | 'arrayBuffer' | 'stream'): Promise<unknown>;
   put(
     key: string,
     value: string | ArrayBuffer | ArrayBufferView | ReadableStream,
     options?: {
       expiration?: number;
       expirationTtl?: number;
-      metadata?: any;
+      metadata?: unknown;
     }
   ): Promise<void>;
   delete(key: string): Promise<void>;
@@ -53,11 +53,10 @@ export interface DurableObjectId {
   name?: string;
 }
 
-export interface DurableObjectStub<T = unknown> {
+export type DurableObjectStub<T = unknown> = {
   id: DurableObjectId;
   name?: string;
-  [key: string]: any;
-}
+} & T;
 
 export interface DurableObjectNamespace<T = unknown> {
   newUniqueId(options?: { jurisdiction?: string }): DurableObjectId;
@@ -88,4 +87,7 @@ export interface DurableObjectStorage {
     reverse?: boolean;
     limit?: number;
   }): Promise<Map<string, T>>;
+  setAlarm(scheduledTime: number | Date, options?: unknown): Promise<void>;
+  getAlarm?(options?: unknown): Promise<number | null>;
+  deleteAlarm?(options?: unknown): Promise<void>;
 }

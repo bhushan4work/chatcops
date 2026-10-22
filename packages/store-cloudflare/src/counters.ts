@@ -26,18 +26,14 @@ export class ChatCopsCounter extends BaseDurableObject {
   declare ctx: DurableObjectState;
   declare env: unknown;
 
-  async increment(by: number, ttlMs: number): Promise<CounterValue>;
-  async increment(key: string, by: number, ttlMs: number): Promise<CounterValue>;
-  async increment(byOrKey: number | string, ttlMsOrBy: number, maybeTtlMs?: number): Promise<CounterValue> {
-    const key = typeof byOrKey === 'string' ? byOrKey : 'counter';
-    const by = typeof byOrKey === 'string' ? ttlMsOrBy : byOrKey;
-    const ttlMs = typeof byOrKey === 'string' ? (maybeTtlMs ?? 60_000) : ttlMsOrBy;
-
+  async increment(by: number, ttlMs: number): Promise<CounterValue> {
+    const key = 'counter';
     const now = Date.now();
     const current = (await this.ctx.storage.get<StoredCounter>(key)) as StoredCounter | undefined;
     let next: StoredCounter;
     if (!current || current.expiresAt <= now) {
       next = { value: by, expiresAt: now + ttlMs };
+      await this.ctx.storage.setAlarm(next.expiresAt);
     } else {
       next = { value: current.value + by, expiresAt: current.expiresAt };
     }
@@ -45,13 +41,17 @@ export class ChatCopsCounter extends BaseDurableObject {
     return next;
   }
 
-  async get(key?: string): Promise<CounterValue | null> {
-    const storageKey = key ?? 'counter';
-    const current = (await this.ctx.storage.get<StoredCounter>(storageKey)) as StoredCounter | undefined;
+  async get(): Promise<CounterValue | null> {
+    const key = 'counter';
+    const current = (await this.ctx.storage.get<StoredCounter>(key)) as StoredCounter | undefined;
     if (!current || current.expiresAt <= Date.now()) {
       return null;
     }
     return current;
+  }
+
+  async alarm(): Promise<void> {
+    await this.ctx.storage.deleteAll();
   }
 }
 
@@ -61,24 +61,13 @@ export class DoCounters implements CounterStore {
   async increment(key: string, by: number, ttlMs: number): Promise<CounterValue> {
     const id = this.namespace.idFromName(key);
     const stub = this.namespace.get(id);
-    const res = await stub.increment(by, ttlMs);
-    return {
-      value: Number(await res.value),
-      expiresAt: Number(await res.expiresAt),
-    };
+    return await stub.increment(by, ttlMs);
   }
 
   async get(key: string): Promise<CounterValue | null> {
     const id = this.namespace.idFromName(key);
     const stub = this.namespace.get(id);
-    const res = await stub.get();
-    if (!res) return null;
-    const value = await res.value;
-    if (value === undefined || value === null) return null;
-    return {
-      value: Number(value),
-      expiresAt: Number(await res.expiresAt),
-    };
+    return (await stub.get()) ?? null;
   }
 }
 

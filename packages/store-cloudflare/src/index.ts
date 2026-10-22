@@ -1,6 +1,6 @@
 import type { ChatCopsStorage } from '@chatcops/core';
 import { CloudflareConversations } from './conversations.js';
-import { ChatCopsCounter, D1Counters, DoCounters } from './counters.js';
+import { type ChatCopsCounter, D1Counters, DoCounters } from './counters.js';
 import { CloudflareEvents } from './events.js';
 import { D1KvStore, WorkersKvStore } from './kv.js';
 import { ensureSchema } from './schema.js';

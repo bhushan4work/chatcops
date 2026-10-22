@@ -6,7 +6,7 @@ Cloudflare storage for [ChatCops](https://chat.codercops.com): conversations, ex
 
 - **Conversations & Messages:** Durable history in Cloudflare D1 SQLite with concurrency-safe `append` without interactive transactions.
 - **Exact Counters:** Globally coordinated rate limits and token budgets through Durable Objects (`ChatCopsCounter`), with automatic fallback to D1 `UPSERT ... RETURNING`.
-- **Key-Value Store:** Ephemeral turn locks using Workers KV when configured or D1 SQLite fallback (with `setIfAbsent` support).
+- **Key-Value Store:** Ephemeral key-value caching using Workers KV or D1 SQLite fallback. Turn locks require the D1 fallback because Workers KV does not support atomic `setIfAbsent`; Workers KV also enforces a 60-second minimum TTL.
 - **Analytics Events:** Time-bucketed event queries in D1 for dashboards and reporting.
 
 ## Install
@@ -78,16 +78,14 @@ let handler: ReturnType<typeof chatcopsCloudflareHandler> | undefined;
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const storage = cloudflareStorage({
-      d1: env.DB,
-      kv: env.KV,
-      counters: env.COUNTERS,
-    });
-
     handler ??= chatcopsCloudflareHandler({
       provider: { type: 'claude', apiKey: env.ANTHROPIC_API_KEY },
       systemPrompt: 'You are a helpful assistant.',
-      storage,
+      storage: cloudflareStorage({
+        d1: env.DB,
+        kv: env.KV,
+        counters: env.COUNTERS,
+      }),
     });
 
     return handler(request, env, ctx);
@@ -99,8 +97,8 @@ export default {
 
 | Option | Type | Required | Description |
 |---|---|---|---|
-| `d1` | `D1Database` | **Yes** | Cloudflare D1 database binding used for conversations, messages, events, and fallback storage. |
-| `kv` | `KVNamespace` | No | Cloudflare Workers KV namespace for fast key-value storage. When omitted, D1 is used as fallback. |
+| `d1` | `D1Database` | **Yes** | Cloudflare D1 database binding used for conversations, messages, events, turn locks, and fallback storage. |
+| `kv` | `KVNamespace` | No | Cloudflare Workers KV namespace for fast key-value storage (minimum TTL: 60 seconds). Turn locks require the D1 fallback because Workers KV does not support atomic `setIfAbsent`. When omitted, D1 is used as fallback. |
 | `counters` | `DurableObjectNamespace<ChatCopsCounter>` | No | Durable Objects namespace for exact distributed counter coordination. When omitted, D1 atomic upserts are used. |
 | `now` | `() => number` | No | Clock function for testing (defaults to `Date.now`). |
 

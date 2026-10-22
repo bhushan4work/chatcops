@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { Miniflare } from 'miniflare';
 import type { ChatCopsCounter, D1Database, DurableObjectNamespace, KVNamespace } from '../src/index.js';
 
@@ -8,74 +9,49 @@ let countersInstance: DurableObjectNamespace<ChatCopsCounter> | undefined;
 
 export async function getMiniflareBindings() {
   if (!mf) {
+    const countersPath = new URL('../dist/counters.js', import.meta.url);
+    const countersSource = readFileSync(countersPath, 'utf8');
+
     mf = new Miniflare({
-      workers: [
+      name: 'test-worker',
+      compatibilityDate: '2026-07-30',
+      compatibilityFlags: ['nodejs_compat'],
+      modules: [
         {
-          config: {
-            name: 'test-worker',
-            compatibilityDate: '2026-10-01',
-            manifest: {
-              mainModule: 'index.js',
-              modules: {
-                'index.js': {
-                  type: 'esm',
-                  contents: `
-                    import { DurableObject } from 'cloudflare:workers';
-                    export class ChatCopsCounter extends DurableObject {
-                      async increment(byOrKey, ttlMsOrBy, maybeTtlMs) {
-                        const key = typeof byOrKey === 'string' ? byOrKey : 'counter';
-                        const by = typeof byOrKey === 'string' ? ttlMsOrBy : byOrKey;
-                        const ttlMs = typeof byOrKey === 'string' ? (maybeTtlMs ?? 60000) : ttlMsOrBy;
-                        const now = Date.now();
-                        const current = await this.ctx.storage.get(key);
-                        let next;
-                        if (!current || current.expiresAt <= now) {
-                          next = { value: by, expiresAt: now + ttlMs };
-                        } else {
-                          next = { value: current.value + by, expiresAt: current.expiresAt };
-                        }
-                        await this.ctx.storage.put(key, next);
-                        return next;
-                      }
-                      async get(key) {
-                        const storageKey = key ?? 'counter';
-                        const current = await this.ctx.storage.get(storageKey);
-                        if (!current || current.expiresAt <= Date.now()) return null;
-                        return current;
-                      }
-                    }
-                    export default {
-                      fetch() { return new Response('ok'); }
-                    };
-                  `,
-                },
-              },
-            },
-            exports: {
-              ChatCopsCounter: {
-                type: 'durable-object',
-                storage: 'sqlite',
-              },
-            },
-            env: {
-              DB: { type: 'd1' },
-              KV: { type: 'kv' },
-              COUNTERS: {
-                type: 'durable-object',
-                worker: 'test-worker',
-                exportName: 'ChatCopsCounter',
-              },
-            },
-          },
+          type: 'ESModule',
+          path: 'index.js',
+          contents: `
+            export { ChatCopsCounter } from './counters.js';
+            export default {
+              fetch() { return new Response('ok'); }
+            };
+          `,
+        },
+        {
+          type: 'ESModule',
+          path: 'counters.js',
+          contents: countersSource,
         },
       ],
+      d1Databases: ['DB'],
+      kvNamespaces: ['KV'],
+      durableObjects: {
+        COUNTERS: {
+          className: 'ChatCopsCounter',
+          useSQLite: true,
+        },
+      },
+      unsafeInspectDurableObjects: true,
     });
     await mf.ready;
     d1Instance = (await mf.getD1Database('DB')) as unknown as D1Database;
     kvInstance = (await mf.getKVNamespace('KV')) as unknown as KVNamespace;
     countersInstance = (await mf.getDurableObjectNamespace('COUNTERS')) as unknown as DurableObjectNamespace<ChatCopsCounter>;
   }
-  return { mf, d1: d1Instance!, kv: kvInstance!, counters: countersInstance! };
+  if (!d1Instance || !kvInstance || !countersInstance) {
+    throw new Error('Failed to initialize Miniflare bindings');
+  }
+  return { mf, d1: d1Instance, kv: kvInstance, counters: countersInstance };
 }
 
 export async function disposeMiniflare() {

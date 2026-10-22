@@ -6,7 +6,7 @@ export class WorkersKvStore implements KeyValueStore {
 
   async get<T = unknown>(key: string): Promise<T | null> {
     const text = await this.kv.get(key, 'text');
-    if (text === null) return null;
+    if (typeof text !== 'string') return null;
     return JSON.parse(text) as T;
   }
 

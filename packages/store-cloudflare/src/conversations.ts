@@ -56,28 +56,21 @@ export class CloudflareConversations implements ConversationStore {
 
   async save(conversation: Conversation): Promise<void> {
     await this.ensure();
-    const current = await this.db
-      .prepare('SELECT version FROM chatcops_conversations WHERE id = ?')
-      .bind(conversation.id)
-      .first<{ version: number }>();
-    const version = (current?.version ?? 0) + 1;
     const time = this.now();
 
     const stmts: D1PreparedStatement[] = [
       this.db
         .prepare(`
           INSERT INTO chatcops_conversations (id, metadata, version, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?)
+          VALUES (?, ?, 1, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             metadata = excluded.metadata,
-            version = excluded.version,
-            created_at = excluded.created_at,
+            version = chatcops_conversations.version + 1,
             updated_at = excluded.updated_at
         `)
         .bind(
           conversation.id,
           json(conversation.metadata),
-          version,
           conversation.createdAt,
           time
         ),
@@ -204,6 +197,11 @@ export class CloudflareConversations implements ConversationStore {
         return { version: nextVersion };
       } catch (err) {
         if (err instanceof ConflictError) throw err;
+        const isUniqueConstraint =
+          err instanceof Error && /UNIQUE constraint failed/i.test(err.message);
+        if (!isUniqueConstraint) {
+          throw err;
+        }
         if (options.expectedVersion !== undefined) {
           const fresh = await this.db
             .prepare('SELECT version FROM chatcops_conversations WHERE id = ?')
@@ -212,7 +210,6 @@ export class CloudflareConversations implements ConversationStore {
           const freshVersion = fresh?.version ?? 0;
           throw new ConflictError(id, options.expectedVersion, freshVersion);
         }
-        continue;
       }
     }
 
@@ -310,19 +307,10 @@ export class CloudflareConversations implements ConversationStore {
 
   async purge(before: number): Promise<number> {
     await this.ensure();
-    const time = this.now();
     const result = await this.db
       .prepare('DELETE FROM chatcops_conversations WHERE updated_at < ?')
       .bind(before)
       .run();
-
-    await this.db
-      .batch([
-        this.db.prepare('DELETE FROM chatcops_messages WHERE conversation_id NOT IN (SELECT id FROM chatcops_conversations)'),
-        this.db.prepare('DELETE FROM chatcops_counters WHERE expires_at <= ?').bind(time),
-        this.db.prepare('DELETE FROM chatcops_kv WHERE expires_at IS NOT NULL AND expires_at <= ?').bind(time),
-      ])
-      .catch(() => {});
 
     return result.meta?.changes ?? 0;
   }
