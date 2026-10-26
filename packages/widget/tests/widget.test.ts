@@ -31,6 +31,7 @@ function getInternals(widget: Widget): WidgetInternals {
 describe('Widget', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
+    document.documentElement.removeAttribute('style');
     localStorage.clear();
     sessionStorage.clear();
   });
@@ -59,6 +60,7 @@ describe('Widget', () => {
   });
 
   afterEach(() => {
+    document.documentElement.removeAttribute('style');
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -932,5 +934,131 @@ describe('Widget streaming timeout configuration', () => {
     widget.open();
 
     expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  describe('scroll-lock', () => {
+    function stubMatchMedia(matches: boolean) {
+      return vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+        matches: query === '(max-width: 640px)' ? matches : false,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      } as unknown as MediaQueryList));
+    }
+
+    it('locks root overflow on mobile and restores it on close, but leaves desktop untouched', () => {
+      stubMatchMedia(false);
+      const desktopWidget = new Widget({ apiUrl: 'https://api.test/chat' });
+      desktopWidget.init();
+      desktopWidget.open();
+      expect(document.documentElement.style.overflow).toBe('');
+      desktopWidget.close();
+      expect(document.documentElement.style.overflow).toBe('');
+      desktopWidget.destroy();
+
+      stubMatchMedia(true);
+      const mobileWidget = new Widget({ apiUrl: 'https://api.test/chat' });
+      mobileWidget.init();
+      expect(document.documentElement.style.overflow).toBe('');
+      mobileWidget.open();
+      expect(document.documentElement.style.overflow).toBe('hidden');
+      mobileWidget.close();
+      expect(document.documentElement.style.overflow).toBe('');
+      mobileWidget.destroy();
+    });
+
+    it('does not lock root overflow in inline mode on mobile', () => {
+      stubMatchMedia(true);
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const widget = new Widget({ apiUrl: 'https://api.test/chat', mode: 'inline', container });
+      widget.init();
+      expect(document.documentElement.style.overflow).toBe('');
+      widget.open();
+      expect(document.documentElement.style.overflow).toBe('');
+      widget.destroy();
+    });
+
+    it('preserves and restores pre-existing inline overflow value and priority', () => {
+      stubMatchMedia(true);
+      document.documentElement.style.setProperty('overflow', 'scroll', 'important');
+
+      const widget = new Widget({ apiUrl: 'https://api.test/chat' });
+      widget.init();
+      widget.open();
+      expect(document.documentElement.style.overflow).toBe('hidden');
+
+      widget.close();
+      expect(document.documentElement.style.getPropertyValue('overflow')).toBe('scroll');
+      expect(document.documentElement.style.getPropertyPriority('overflow')).toBe('important');
+      widget.destroy();
+    });
+
+    it('restores pre-existing overflow when closed from the header close button', () => {
+      stubMatchMedia(true);
+      document.documentElement.style.setProperty('overflow', 'auto');
+
+      const widget = new Widget({ apiUrl: 'https://api.test/chat' });
+      widget.init();
+      widget.open();
+      expect(document.documentElement.style.overflow).toBe('hidden');
+
+      const headerClose = getInternals(widget).shadow.querySelector('.cc-header-close') as HTMLButtonElement;
+      headerClose.click();
+      expect(document.documentElement.style.getPropertyValue('overflow')).toBe('auto');
+      widget.destroy();
+    });
+
+    it('restores root overflow on destroy when open, and does not alter overflow if already closed', () => {
+      stubMatchMedia(true);
+      document.documentElement.style.setProperty('overflow', 'auto');
+
+      const widget = new Widget({ apiUrl: 'https://api.test/chat' });
+      widget.init();
+      widget.open();
+      expect(document.documentElement.style.overflow).toBe('hidden');
+
+      widget.destroy();
+      expect(document.documentElement.style.getPropertyValue('overflow')).toBe('auto');
+
+      // Destroying while already closed
+      const closedWidget = new Widget({ apiUrl: 'https://api.test/chat' });
+      closedWidget.init();
+      expect(document.documentElement.style.getPropertyValue('overflow')).toBe('auto');
+      closedWidget.destroy();
+      expect(document.documentElement.style.getPropertyValue('overflow')).toBe('auto');
+    });
+
+    it('handles repeated open, close, and destroy calls safely without overwriting saved overflow', () => {
+      stubMatchMedia(true);
+      document.documentElement.style.setProperty('overflow', 'auto');
+
+      const widget = new Widget({ apiUrl: 'https://api.test/chat' });
+      widget.init();
+
+      // Repeated open
+      widget.open();
+      expect(document.documentElement.style.overflow).toBe('hidden');
+      widget.open();
+      expect(document.documentElement.style.overflow).toBe('hidden');
+
+      // Repeated close
+      widget.close();
+      expect(document.documentElement.style.getPropertyValue('overflow')).toBe('auto');
+      widget.close();
+      expect(document.documentElement.style.getPropertyValue('overflow')).toBe('auto');
+
+      // Open again, repeated destroy
+      widget.open();
+      expect(document.documentElement.style.overflow).toBe('hidden');
+      widget.destroy();
+      expect(document.documentElement.style.getPropertyValue('overflow')).toBe('auto');
+      widget.destroy();
+      expect(document.documentElement.style.getPropertyValue('overflow')).toBe('auto');
+    });
   });
 });

@@ -173,6 +173,7 @@ export class Widget {
   private eventHandlers = new Map<WidgetEventType, Set<AnyHandler>>();
   private containerEl?: HTMLElement;
   private autoOpenTimer?: ReturnType<typeof setTimeout>;
+  private savedOverflow?: { value: string; priority: string };
 
   get isInline(): boolean {
     return this.config.mode === 'inline';
@@ -321,6 +322,7 @@ export class Widget {
       this.fab?.hideBadge();
       this.bubble?.hide();
     }
+    this.lockScroll();
     this.config.onOpen?.();
     this.emit('open');
   }
@@ -332,6 +334,7 @@ export class Widget {
       this.fab?.setOpen(false);
       if (hadFocus) this.fab?.focus();
     }
+    this.restoreScroll();
     this.config.onClose?.();
     this.emit('close');
   }
@@ -349,6 +352,7 @@ export class Widget {
     if (this.autoOpenTimer !== undefined) clearTimeout(this.autoOpenTimer);
     this.abortController?.abort();
     this.abortController = undefined;
+    this.restoreScroll();
     this.preChatFormEl?.destroy();
     this.bubble?.destroy();
     this.panel.destroy();
@@ -358,6 +362,30 @@ export class Widget {
     this.eventHandlers.clear();
     this.messages = [];
     this.userData = undefined;
+  }
+
+  private lockScroll(): void {
+    if (this.savedOverflow !== undefined || this.isInline) return;
+    // Keep this breakpoint synchronized with @media (max-width: 640px) in packages/widget/src/styles/widget.css
+    if (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 640px)')?.matches) {
+      const root = document.documentElement;
+      this.savedOverflow = {
+        value: root.style.getPropertyValue('overflow'),
+        priority: root.style.getPropertyPriority('overflow'),
+      };
+      root.style.setProperty('overflow', 'hidden');
+    }
+  }
+
+  private restoreScroll(): void {
+    if (this.savedOverflow === undefined) return;
+    const { value, priority } = this.savedOverflow;
+    if (value) {
+      document.documentElement.style.setProperty('overflow', value, priority);
+    } else {
+      document.documentElement.style.removeProperty('overflow');
+    }
+    this.savedOverflow = undefined;
   }
 
   on<E extends WidgetEventType>(event: E, handler: WidgetEventHandler<E>): () => void {

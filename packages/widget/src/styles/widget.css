@@ -481,7 +481,7 @@
 }
 
 /* Mobile */
-@media (max-width: 768px) {
+@media (max-width: 640px) {
   .cc-fab.cc-open {
     display: none;
   }
@@ -489,17 +489,25 @@
   .cc-panel:not(.cc-inline) {
     width: 100%;
     height: 100%;
+    /* biome-ignore lint/suspicious/noDuplicateProperties: fallback */
+    height: 100dvh;
     max-height: 100%;
     bottom: 0;
     inset-inline: 0;
     /* Both sides are 0, so this is the same in either direction. */
     border-radius: 0;
     border: none;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .cc-panel.cc-left:not(.cc-inline) {
     /* Physical placement: preserve the site's bottom-left choice. */
     left: 0;
+  }
+
+  .cc-input {
+    font-size: 16px;
   }
 
   .cc-bubble {
