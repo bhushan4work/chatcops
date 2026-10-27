@@ -13,10 +13,7 @@ import {
   FAQKnowledgeSource,
   LeadCaptureTool,
   TextKnowledgeSource,
-  memoryVectors,
-  retrieverKnowledge,
-  vectorRetriever,
-  workersAiEmbedder,
+  type WorkersAiBinding,
 } from '@chatcops/core';
 import { cloudflareStorage, ChatCopsCounter } from '@chatcops/store-cloudflare';
 
@@ -26,7 +23,7 @@ export { ChatCopsCounter };
 interface Env {
   DB: D1Database;
   COUNTERS: DurableObjectNamespace<ChatCopsCounter>;
-  AI: any;
+  AI: WorkersAiBinding;
   ANTHROPIC_API_KEY: string;
   WEBHOOK_URL: string;
   SYSTEM_PROMPT: string;
@@ -36,9 +33,6 @@ interface Env {
 // the bindings only exist inside a request.
 let handler: ReturnType<typeof chatcopsCloudflareHandler> | undefined;
 function getHandler(env: Env) {
-  const embedder = workersAiEmbedder({ ai: env.AI });
-  const vectors = memoryVectors({ dimensions: embedder.dimensions });
-
   handler ??= chatcopsCloudflareHandler({
     provider: {
       type: 'claude',
@@ -63,7 +57,6 @@ function getHandler(env: Env) {
     ],
 
     knowledge: [
-      retrieverKnowledge(vectorRetriever({ store: vectors, embedder }), { topK: 5 }),
       new FAQKnowledgeSource([
         { question: 'Pricing?', answer: 'Free tier available. Pro starts at $29/mo.' },
         { question: 'Support hours?', answer: '24/7 via chat, email support 9am-5pm EST.' },
@@ -100,6 +93,8 @@ export default {
   },
 };
 ```
+
+To query a persistent vector store (such as Cloudflare Vectorize) alongside static knowledge sources, connect `workersAiEmbedder({ ai: env.AI })` to a vector retriever. See [Retrieval from a vector store](/core/knowledge-base/#retrieval-from-a-vector-store) for setup and retriever options.
 
 ## `wrangler.toml`
 

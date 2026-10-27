@@ -183,4 +183,20 @@ describe('workersAiEmbedder', () => {
     await expect(embedder.embed(['x'], 'query', { signal: controller.signal })).rejects.toThrow('Turn canceled');
     expect(ai.run).not.toHaveBeenCalled();
   });
+
+  it('stops and rejects with signal reason when aborted between batches', async () => {
+    const controller = new AbortController();
+    const ai = {
+      run: vi.fn().mockImplementation(async () => {
+        controller.abort(new Error('Turn canceled mid-batch'));
+        return { data: [makeVector(1)] };
+      }),
+    };
+    const embedder = workersAiEmbedder({ ai, batchSize: 1 });
+
+    await expect(embedder.embed(['x', 'y'], 'query', { signal: controller.signal })).rejects.toThrow(
+      'Turn canceled mid-batch'
+    );
+    expect(ai.run).toHaveBeenCalledTimes(1);
+  });
 });

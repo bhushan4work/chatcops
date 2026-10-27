@@ -147,9 +147,15 @@ The newer Voyage models (`voyage-4`, `voyage-4-lite`, `voyage-3.5` and others) c
 In a Cloudflare Worker, pass the `AI` binding directly:
 
 ```typescript
-import { memoryVectors, retrieverKnowledge, vectorRetriever, workersAiEmbedder } from '@chatcops/core';
+import {
+  memoryVectors,
+  retrieverKnowledge,
+  vectorRetriever,
+  workersAiEmbedder,
+  type WorkersAiBinding,
+} from '@chatcops/core';
 
-declare const env: { AI: any };
+declare const env: { AI: WorkersAiBinding };
 
 const embedder = workersAiEmbedder({ ai: env.AI });
 const vectors = memoryVectors({ dimensions: embedder.dimensions });
