@@ -94,12 +94,15 @@ export type {
   Retriever,
   Reranker,
   OpenAIEmbedderOptions,
+  WorkersAiBinding,
+  WorkersAiEmbedderOptions,
   RetrieverKnowledgeOptions,
   VectorRetrieverOptions,
   HybridRetrieverOptions,
 } from './retrieval/index.js';
 export {
   openaiEmbedder,
+  workersAiEmbedder,
   retrieverKnowledge,
   formatSources,
   uniqueChunks,
