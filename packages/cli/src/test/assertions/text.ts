@@ -20,8 +20,22 @@ export const icontains: AssertionCheck = (value, turn) => {
     : { pass: true, reason: `the reply contains ${quoted(wanted)}` };
 };
 
+function regexReason(error: SyntaxError): string {
+  const match = error.message.match(/:\s*([^:]+)$/);
+  return match ? match[1].trim() : error.message;
+}
+
 function readRegex(value: unknown): RegExp {
-  if (typeof value === 'string') return new RegExp(value);
+  if (typeof value === 'string') {
+    try {
+      return new RegExp(value);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(`regex: ${quoted([value])} isn't a valid regular expression (${regexReason(error)})`);
+      }
+      throw error;
+    }
+  }
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
     const keys = Object.keys(value);
     if (keys.some((key) => key !== 'pattern' && key !== 'flags') || typeof (value as Record<string, unknown>).pattern !== 'string') {
@@ -29,7 +43,23 @@ function readRegex(value: unknown): RegExp {
     }
     const { pattern, flags } = value as { pattern: string; flags?: unknown };
     if (flags !== undefined && typeof flags !== 'string') throw new Error('regex flags must be a string');
-    return new RegExp(pattern, flags);
+    try {
+      return new RegExp(pattern, flags);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        if (flags !== undefined) {
+          try {
+            new RegExp('', flags);
+          } catch (flagsError) {
+            if (flagsError instanceof SyntaxError) {
+              throw new Error(`regex: flags ${quoted([flags])} aren't valid regular expression flags (${regexReason(flagsError)})`);
+            }
+          }
+        }
+        throw new Error(`regex: ${quoted([pattern])} isn't a valid regular expression (${regexReason(error)})`);
+      }
+      throw error;
+    }
   }
   throw new Error('regex takes a pattern string or { pattern, flags }');
 }

@@ -121,7 +121,7 @@ tests:
     const { code, stdout, stderr } = await run(['test'], project(files));
     expect(stderr).toBe('');
     expect(code).toBe(EXIT.ok);
-    expect(stdout).toContain('✓ evals/text-assertions.chat.yaml > checks icontains, regex, and equals');
+    expect(stdout).toContain(`${join('evals', 'text-assertions.chat.yaml')}\n  ✓ checks icontains, regex, and equals`);
     expect(stdout).toContain('1 passed, 0 failed.');
   });
 
@@ -459,9 +459,38 @@ describe('assertions', () => {
     expect(await check({ 'not-regex': '\\$\\d+' }, turn, [turn])).toMatchObject({ pass: false, reason: 'expected not: the reply matches /\\$\\d+/' });
     expect(await check({ 'not-regex': { pattern: 'team', flags: 'i' } }, turn, [turn])).toMatchObject({ pass: false, reason: 'expected not: the reply matches /team/i' });
 
-    expect(await check({ regex: '[' }, turn, [turn])).toMatchObject({ pass: false, reason: expect.stringMatching(/Invalid regular expression/) });
-    expect(await check({ regex: { pattern: '[' } }, turn, [turn])).toMatchObject({ pass: false, reason: expect.stringMatching(/Invalid regular expression/) });
-    expect(await check({ regex: { pattern: 'team', flags: 'invalid' } }, turn, [turn])).toMatchObject({ pass: false, reason: expect.stringMatching(/Invalid flags/) });
+    expect(await check({ regex: '(' }, turn, [turn])).toMatchObject({
+      pass: false,
+      reason: 'regex: "(" isn\'t a valid regular expression (Unterminated group)',
+    });
+    expect(await check({ 'not-regex': '(' }, turn, [turn])).toMatchObject({
+      pass: false,
+      reason: 'regex: "(" isn\'t a valid regular expression (Unterminated group)',
+    });
+    expect(await check({ regex: { pattern: '(' } }, turn, [turn])).toMatchObject({
+      pass: false,
+      reason: 'regex: "(" isn\'t a valid regular expression (Unterminated group)',
+    });
+    expect(await check({ regex: { pattern: 'a', flags: 'zz' } }, turn, [turn])).toMatchObject({
+      pass: false,
+      reason: 'regex: flags "zz" aren\'t valid regular expression flags (Invalid flags supplied to RegExp constructor \'zz\')',
+    });
+    expect(await check({ 'not-regex': { pattern: 'a', flags: 'zz' } }, turn, [turn])).toMatchObject({
+      pass: false,
+      reason: 'regex: flags "zz" aren\'t valid regular expression flags (Invalid flags supplied to RegExp constructor \'zz\')',
+    });
+    expect(await check({ regex: '[' }, turn, [turn])).toMatchObject({
+      pass: false,
+      reason: 'regex: "[" isn\'t a valid regular expression (Unterminated character class)',
+    });
+    expect(await check({ regex: { pattern: '[' } }, turn, [turn])).toMatchObject({
+      pass: false,
+      reason: 'regex: "[" isn\'t a valid regular expression (Unterminated character class)',
+    });
+    expect(await check({ regex: { pattern: 'team', flags: 'invalid' } }, turn, [turn])).toMatchObject({
+      pass: false,
+      reason: 'regex: flags "invalid" aren\'t valid regular expression flags (Invalid flags supplied to RegExp constructor \'invalid\')',
+    });
     expect(await check({ regex: { pattern: 'team', flags: 123 } }, turn, [turn])).toMatchObject({ pass: false, reason: 'regex flags must be a string' });
     for (const bad of [19, null, [], {}, { pattern: 19 }, { pattern: 'team', extra: 1 }]) {
       expect(await check({ regex: bad }, turn, [turn])).toMatchObject({ pass: false, reason: 'regex takes a pattern string or { pattern, flags }' });
