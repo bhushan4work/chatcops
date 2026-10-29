@@ -1,33 +1,13 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { AssertionCheck } from '../types.js';
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function exactMatch(expected: unknown, actual: unknown): boolean {
-  if (Object.is(expected, actual)) return true;
-  if (Array.isArray(expected)) {
-    if (!Array.isArray(actual) || expected.length !== actual.length) return false;
-    return expected.every((val, idx) => exactMatch(val, actual[idx]));
-  }
-  if (isObject(expected)) {
-    if (!isObject(actual)) return false;
-    const expectedKeys = Object.keys(expected);
-    const actualKeys = Object.keys(actual);
-    if (expectedKeys.length !== actualKeys.length) return false;
-    return expectedKeys.every(
-      (key) => Object.hasOwn(actual, key) && exactMatch(expected[key], actual[key]),
-    );
-  }
-  return false;
-}
-
 function matchesPartial(expected: unknown, actual: unknown): boolean {
   if (Object.is(expected, actual)) return true;
-  if (Array.isArray(expected)) {
-    if (!Array.isArray(actual) || expected.length !== actual.length) return false;
-    return expected.every((val, idx) => exactMatch(val, actual[idx]));
-  }
+  if (Array.isArray(expected)) return isDeepStrictEqual(expected, actual);
   if (isObject(expected)) {
     if (!isObject(actual)) return false;
     return Object.entries(expected).every(
@@ -77,7 +57,7 @@ function formatActual(calls: Array<{ name: string; input: unknown }>): string {
  */
 export const callsTool: AssertionCheck = (value, turn) => {
   const { name, args } = parseCallsTool(value);
-  const calls = turn.toolCalls ?? [];
+  const calls = turn.toolCalls;
   const matched = calls.some(
     (call) => call.name === name && (args === undefined || matchesPartial(args, call.input)),
   );
@@ -94,12 +74,12 @@ export const callsTool: AssertionCheck = (value, turn) => {
  */
 export const noToolCall: AssertionCheck = (value, turn) => {
   const target = parseNoToolCall(value);
-  const calls = turn.toolCalls ?? [];
+  const calls = turn.toolCalls;
   const actual = formatActual(calls);
   if (target === true) {
     return calls.length === 0
       ? { pass: true, reason: 'the turn called no tools' }
-      : { pass: false, reason: `the turn called tools (${actual})` };
+      : { pass: false, reason: `the turn called ${calls.map(formatCall).join(', ')}` };
   }
   const called = calls.some((call) => call.name === target);
   return !called

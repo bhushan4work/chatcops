@@ -577,6 +577,26 @@ describe('assertions', () => {
         [withCall],
       ),
     ).toMatchObject({ pass: false });
+
+    // Arrays containing objects must match elements exactly, not partially
+    const orderWithItems: TurnResult = {
+      ...turn,
+      toolCalls: [{ name: 'checkout', input: { items: [{ sku: 1, qty: 2 }] } }],
+    };
+    expect(
+      await check(
+        { 'calls-tool': { name: 'checkout', args: { items: [{ sku: 1 }] } } },
+        orderWithItems,
+        [orderWithItems],
+      ),
+    ).toMatchObject({ pass: false });
+    expect(
+      await check(
+        { 'calls-tool': { name: 'checkout', args: { items: [{ sku: 1, qty: 2 }] } } },
+        orderWithItems,
+        [orderWithItems],
+      ),
+    ).toMatchObject({ pass: true });
   });
 
   it('calls-tool and no-tool-call report mismatches with actionable actual calls', async () => {
@@ -630,7 +650,7 @@ describe('assertions', () => {
     });
     expect(await check({ 'no-tool-call': true }, withCall, [withCall])).toMatchObject({
       pass: false,
-      reason: 'the turn called tools (it called lookup_order({"id":"A-1"}))',
+      reason: 'the turn called lookup_order({"id":"A-1"})',
     });
 
     // no-tool-call: string passes when specific tool not called
@@ -673,6 +693,7 @@ describe('assertions', () => {
     // not-no-tool-call
     expect(await check({ 'not-no-tool-call': true }, withCall, [withCall])).toMatchObject({
       pass: true,
+      reason: 'the turn called lookup_order({"id":"A-1"})',
     });
     expect(await check({ 'not-no-tool-call': true }, turn, [turn])).toMatchObject({
       pass: false,
