@@ -473,11 +473,11 @@ describe('assertions', () => {
     });
     expect(await check({ regex: { pattern: 'a', flags: 'zz' } }, turn, [turn])).toMatchObject({
       pass: false,
-      reason: 'regex: flags "zz" aren\'t valid regular expression flags (Invalid flags supplied to RegExp constructor \'zz\')',
+      reason: 'regex: flags "zz" aren\'t valid regular expression flags',
     });
     expect(await check({ 'not-regex': { pattern: 'a', flags: 'zz' } }, turn, [turn])).toMatchObject({
       pass: false,
-      reason: 'regex: flags "zz" aren\'t valid regular expression flags (Invalid flags supplied to RegExp constructor \'zz\')',
+      reason: 'regex: flags "zz" aren\'t valid regular expression flags',
     });
     expect(await check({ regex: '[' }, turn, [turn])).toMatchObject({
       pass: false,
@@ -489,7 +489,7 @@ describe('assertions', () => {
     });
     expect(await check({ regex: { pattern: 'team', flags: 'invalid' } }, turn, [turn])).toMatchObject({
       pass: false,
-      reason: 'regex: flags "invalid" aren\'t valid regular expression flags (Invalid flags supplied to RegExp constructor \'invalid\')',
+      reason: 'regex: flags "invalid" aren\'t valid regular expression flags',
     });
     expect(await check({ regex: { pattern: 'team', flags: 123 } }, turn, [turn])).toMatchObject({ pass: false, reason: 'regex flags must be a string' });
     for (const bad of [19, null, [], {}, { pattern: 19 }, { pattern: 'team', extra: 1 }]) {
@@ -502,9 +502,14 @@ describe('assertions', () => {
     expect(await check({ equals: 'The Team plan is $19.' }, turn, [turn])).toMatchObject({ pass: true, reason: 'the reply equals "The Team plan is $19."' });
     const padded: TurnResult = { ...turn, text: '  The Team plan is $19. \n' };
     expect(await check({ equals: 'The Team plan is $19.' }, padded, [padded])).toMatchObject({ pass: true });
+    expect(await check({ equals: 'The Team plan is $19.\n' }, turn, [turn])).toMatchObject({ pass: true, reason: 'the reply equals "The Team plan is $19.\\n"' });
+    expect(await check({ equals: 'The Team plan is $19.\n' }, padded, [padded])).toMatchObject({ pass: true });
     expect(await check({ equals: 'The Pro plan is $29.' }, turn, [turn])).toMatchObject({ pass: false, reason: 'the reply doesn\'t equal "The Pro plan is $29."' });
+    expect(await check({ equals: 'The Pro plan is $29.\n' }, turn, [turn])).toMatchObject({ pass: false, reason: 'the reply doesn\'t equal "The Pro plan is $29.\\n"' });
     expect(await check({ 'not-equals': 'The Pro plan is $29.' }, turn, [turn])).toMatchObject({ pass: true });
+    expect(await check({ 'not-equals': 'The Pro plan is $29.\n' }, turn, [turn])).toMatchObject({ pass: true });
     expect(await check({ 'not-equals': 'The Team plan is $19.' }, turn, [turn])).toMatchObject({ pass: false, reason: 'expected not: the reply equals "The Team plan is $19."' });
+    expect(await check({ 'not-equals': 'The Team plan is $19.\n' }, turn, [turn])).toMatchObject({ pass: false, reason: 'expected not: the reply equals "The Team plan is $19.\\n"' });
     for (const bad of [19, null, [], {}, true]) {
       expect(await check({ equals: bad }, turn, [turn])).toMatchObject({ pass: false, reason: 'equals takes a string' });
       expect(await check({ 'not-equals': bad }, turn, [turn])).toMatchObject({ pass: false, reason: 'equals takes a string' });
